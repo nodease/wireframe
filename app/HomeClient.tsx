@@ -1910,7 +1910,6 @@ export default function HomePage({
       <WorkflowRunReportPage
             workflowName={reportWorkflow?.name ?? createdWorkflowName}
             workflow={reportWorkflow}
-            workflowRecords={workflows}
             summary={analyticsSummary}
         workflows={workflowAnalytics}
         selectedWorkflow={selectedAnalyticsWorkflow}
