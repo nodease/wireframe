@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowLeft, X } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/src/components/ui/card';
@@ -67,6 +67,24 @@ type RagMetric = {
   value: string;
   description: string;
   tone?: 'default' | 'warning';
+};
+
+type ReportChartMetric = 'tokens' | 'avgDuration' | 'executions' | 'cost' | 'errors';
+type ReportChartUnit = 'day' | 'week' | 'month';
+type ReportExecutionFilter = 'all' | 'auto' | 'manual';
+type ReportStatusFilter = 'all' | 'success' | 'failed';
+type ReportExecutorFilter = 'all' | 'auto' | 'users';
+
+type InteractiveReportPoint = {
+  label: string;
+  executions: number;
+  avgDuration: number;
+  tokens: number;
+  cost: number;
+  errors: number;
+  autoExecutions: number;
+  manualExecutions: number;
+  userExecutions: number;
 };
 
 type WorkflowRunHistoryEntry = {
@@ -159,6 +177,11 @@ export function WorkflowRunReportPage({
   onSelectWorkflow,
   onResolveFailure,
 }: WorkflowRunReportPageProps) {
+  const [reportMetric, setReportMetric] = useState<ReportChartMetric>('tokens');
+  const [reportUnit, setReportUnit] = useState<ReportChartUnit>('day');
+  const [executionFilter, setExecutionFilter] = useState<ReportExecutionFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('all');
+  const [executorFilter, setExecutorFilter] = useState<ReportExecutorFilter>('all');
   const syntheticLogs = useMemo<ExecutionLog[]>(
     () =>
       workflow?.nodes.map((node, index) => ({
@@ -438,6 +461,48 @@ export function WorkflowRunReportPage({
       };
     });
   }, [displayLogs, failedLogs.length, selectedWorkflow?.lastRun, syntheticLogs]);
+  const interactiveReportData = useMemo<InteractiveReportPoint[]>(() => {
+    const labelsByUnit: Record<ReportChartUnit, string[]> = {
+      day: ['6/17', '6/18', '6/19', '6/20', '6/21', '6/22', '6/23'],
+      week: ['5월 4주', '6월 1주', '6월 2주', '6월 3주', '6월 4주'],
+      month: ['1월', '2월', '3월', '4월', '5월', '6월'],
+    };
+    const base = selectedWorkflow?.executions ?? summary.executions;
+    const labels = labelsByUnit[reportUnit];
+    const unitMultiplier = reportUnit === 'day' ? 0.16 : reportUnit === 'week' ? 0.42 : 0.76;
+
+    return labels.map((label, index) => {
+      const wave = 1 + ((index % 3) - 1) * 0.12;
+      const executions = Math.max(1, Math.round(base * unitMultiplier * wave));
+      const avgDuration = Number(
+        ((selectedWorkflow?.avgDuration ?? Math.max(1.2, totalDuration || 2.4)) + index * 0.18).toFixed(1),
+      );
+      const tokens = Math.max(900, Math.round(baseTokens * unitMultiplier * wave));
+      const errors = Math.max(0, Math.round((selectedWorkflow?.errorCount ?? failedLogs.length) * wave));
+      const autoExecutions = Math.round(executions * (0.58 + (index % 2) * 0.08));
+
+      return {
+        label,
+        executions,
+        avgDuration,
+        tokens,
+        cost: estimateCost(tokens),
+        errors,
+        autoExecutions,
+        manualExecutions: Math.max(0, executions - autoExecutions),
+        userExecutions: Math.max(0, executions - autoExecutions),
+      };
+    });
+  }, [
+    baseTokens,
+    failedLogs.length,
+    reportUnit,
+    selectedWorkflow?.avgDuration,
+    selectedWorkflow?.errorCount,
+    selectedWorkflow?.executions,
+    summary.executions,
+    totalDuration,
+  ]);
   const chartRows = selectedWorkflow
     ? displayLogs.map((log) => ({
         id: log.nodeId,
@@ -557,6 +622,20 @@ export function WorkflowRunReportPage({
                 />
               </CardContent>
             </Card>
+
+            <InteractiveReportChart
+              data={interactiveReportData}
+              metric={reportMetric}
+              unit={reportUnit}
+              executionFilter={executionFilter}
+              statusFilter={statusFilter}
+              executorFilter={executorFilter}
+              onChangeMetric={setReportMetric}
+              onChangeUnit={setReportUnit}
+              onChangeExecutionFilter={setExecutionFilter}
+              onChangeStatusFilter={setStatusFilter}
+              onChangeExecutorFilter={setExecutorFilter}
+            />
 
             <Card>
               <CardHeader>
@@ -807,6 +886,288 @@ function LatestExecutionField({
       <small className="mt-2 block text-xs leading-5 text-slate-500">
         {description}
       </small>
+    </div>
+  );
+}
+
+function InteractiveReportChart({
+  data,
+  metric,
+  unit,
+  executionFilter,
+  statusFilter,
+  executorFilter,
+  onChangeMetric,
+  onChangeUnit,
+  onChangeExecutionFilter,
+  onChangeStatusFilter,
+  onChangeExecutorFilter,
+}: {
+  data: InteractiveReportPoint[];
+  metric: ReportChartMetric;
+  unit: ReportChartUnit;
+  executionFilter: ReportExecutionFilter;
+  statusFilter: ReportStatusFilter;
+  executorFilter: ReportExecutorFilter;
+  onChangeMetric: (metric: ReportChartMetric) => void;
+  onChangeUnit: (unit: ReportChartUnit) => void;
+  onChangeExecutionFilter: (filter: ReportExecutionFilter) => void;
+  onChangeStatusFilter: (filter: ReportStatusFilter) => void;
+  onChangeExecutorFilter: (filter: ReportExecutorFilter) => void;
+}) {
+  const metricLabels: Record<ReportChartMetric, string> = {
+    tokens: '토큰 사용량',
+    avgDuration: '평균 실행 시간',
+    executions: '실행 횟수',
+    cost: '비용',
+    errors: '오류 수',
+  };
+  const unitLabels: Record<ReportChartUnit, string> = {
+    day: '일 단위',
+    week: '주 단위',
+    month: '월 단위',
+  };
+  const filteredData = data.map((point) => {
+    const executionRatio =
+      executionFilter === 'auto'
+        ? point.autoExecutions / Math.max(1, point.executions)
+        : executionFilter === 'manual'
+          ? point.manualExecutions / Math.max(1, point.executions)
+          : 1;
+    const executorRatio =
+      executorFilter === 'auto'
+        ? point.autoExecutions / Math.max(1, point.executions)
+        : executorFilter === 'users'
+          ? point.userExecutions / Math.max(1, point.executions)
+          : 1;
+    const statusRatio =
+      statusFilter === 'failed'
+        ? point.errors / Math.max(1, point.executions)
+        : statusFilter === 'success'
+          ? Math.max(0, point.executions - point.errors) / Math.max(1, point.executions)
+          : 1;
+    const ratio = Math.max(0, executionRatio * executorRatio * statusRatio);
+
+    return {
+      ...point,
+      executions: Math.max(0, Math.round(point.executions * ratio)),
+      tokens: Math.max(0, Math.round(point.tokens * ratio)),
+      cost: Number((point.cost * ratio).toFixed(4)),
+      errors: statusFilter === 'success' ? 0 : Math.max(0, Math.round(point.errors * ratio)),
+      avgDuration: Number((point.avgDuration * (statusFilter === 'failed' ? 1.18 : 1)).toFixed(1)),
+    };
+  });
+  const getMetricValue = (point: InteractiveReportPoint) => {
+    if (metric === 'avgDuration') {
+      return point.avgDuration;
+    }
+
+    return point[metric];
+  };
+  const formatMetricValue = (value: number) => {
+    if (metric === 'avgDuration') {
+      return `${value.toFixed(1)}s`;
+    }
+
+    if (metric === 'tokens') {
+      return value.toLocaleString('ko-KR');
+    }
+
+    if (metric === 'cost') {
+      return `$${value.toFixed(4)}`;
+    }
+
+    return `${Math.round(value).toLocaleString('ko-KR')}회`;
+  };
+  const values = filteredData.map(getMetricValue);
+  const maxValue = Math.max(1, ...values);
+  const totalValue = values.reduce((total, value) => total + value, 0);
+  const averageValue = totalValue / Math.max(1, values.length);
+  const peak = filteredData.reduce(
+    (currentPeak, point) => (getMetricValue(point) > getMetricValue(currentPeak) ? point : currentPeak),
+    filteredData[0] ?? data[0],
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="text-lg font-black text-slate-950">맞춤 보고 그래프</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              지표, 기간 단위, 실행 방식과 상태를 바꿔 원하는 관점으로 운영 데이터를 필터링합니다.
+            </p>
+          </div>
+          <Badge variant="secondary">
+            {metricLabels[metric]} · {unitLabels[unit]}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-5">
+        <div className="grid gap-3 md:grid-cols-5">
+          <ReportSelect
+            label="보고 지표"
+            value={metric}
+            options={[
+              ['tokens', '토큰 사용량'],
+              ['avgDuration', '평균 실행 시간'],
+              ['executions', '실행 횟수'],
+              ['cost', '비용'],
+              ['errors', '오류 수'],
+            ]}
+            onChange={(value) => onChangeMetric(value as ReportChartMetric)}
+          />
+          <ReportSelect
+            label="기간 단위"
+            value={unit}
+            options={[
+              ['day', '일 단위'],
+              ['week', '주 단위'],
+              ['month', '월 단위'],
+            ]}
+            onChange={(value) => onChangeUnit(value as ReportChartUnit)}
+          />
+          <ReportSelect
+            label="실행 방식"
+            value={executionFilter}
+            options={[
+              ['all', '전체 실행'],
+              ['auto', '자동 실행만'],
+              ['manual', '수동 실행만'],
+            ]}
+            onChange={(value) => onChangeExecutionFilter(value as ReportExecutionFilter)}
+          />
+          <ReportSelect
+            label="상태"
+            value={statusFilter}
+            options={[
+              ['all', '전체 상태'],
+              ['success', '성공만'],
+              ['failed', '실패만'],
+            ]}
+            onChange={(value) => onChangeStatusFilter(value as ReportStatusFilter)}
+          />
+          <ReportSelect
+            label="실행자"
+            value={executorFilter}
+            options={[
+              ['all', '전체 실행자'],
+              ['auto', '자동 실행'],
+              ['users', '사용자 실행'],
+            ]}
+            onChange={(value) => onChangeExecutorFilter(value as ReportExecutorFilter)}
+          />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="grid grid-cols-[56px_1fr] gap-3">
+              <div className="relative flex h-72 flex-col justify-between text-right text-[11px] font-semibold text-slate-400">
+                {[maxValue, maxValue / 2, 0].map((tick) => (
+                  <span key={tick}>{formatMetricValue(tick)}</span>
+                ))}
+              </div>
+              <div className="relative h-72 border-b border-l border-slate-300 pl-4">
+                <div className="absolute inset-x-4 top-0 border-t border-dashed border-slate-200" />
+                <div className="absolute inset-x-4 top-1/2 border-t border-dashed border-slate-200" />
+                <div className="flex h-full items-end justify-around gap-3">
+                  {filteredData.map((point) => {
+                    const value = getMetricValue(point);
+
+                    return (
+                      <div key={point.label} className="flex h-full flex-1 flex-col justify-end">
+                        <div className="flex flex-col items-center gap-2">
+                          <span className="text-[11px] font-black text-slate-600">
+                            {formatMetricValue(value)}
+                          </span>
+                          <div className="flex h-56 w-full items-end justify-center">
+                            <span
+                              className="block w-full max-w-14 rounded-t-md bg-slate-950 transition-all"
+                              style={{ height: `${Math.max(4, (value / maxValue) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-[56px_1fr] gap-3">
+              <span />
+              <div className="flex justify-around gap-3 pl-4 text-center text-xs font-black text-slate-500">
+                {filteredData.map((point) => (
+                  <span key={point.label} className="flex-1">
+                    {point.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <ReportInsight label="합계" value={formatMetricValue(totalValue)} />
+            <ReportInsight label="평균" value={formatMetricValue(averageValue)} />
+            <ReportInsight
+              label="최고 구간"
+              value={peak ? `${peak.label} · ${formatMetricValue(getMetricValue(peak))}` : '-'}
+            />
+            <ReportInsight
+              label="필터"
+              value={`${unitLabels[unit]} · ${metricLabels[metric]}`}
+              muted
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReportSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<[string, string]>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-xs font-black text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none transition focus:border-slate-950"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ReportInsight({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className={cn('rounded-lg border p-4', muted ? 'border-slate-200 bg-slate-50' : 'border-slate-200 bg-white')}>
+      <span className="block text-xs font-black text-slate-500">{label}</span>
+      <strong className="mt-2 block break-words text-lg font-black text-slate-950">
+        {value}
+      </strong>
     </div>
   );
 }
