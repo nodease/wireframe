@@ -97,6 +97,32 @@ type LlmConfigChange = {
   rerunRate: string;
 };
 
+type LangSmithEvaluatorMetric = {
+  key: string;
+  label: string;
+  source: 'online evaluator' | 'offline experiment' | 'human annotation';
+  target: 'root run' | 'LLM span' | 'retrieval span' | 'tool span';
+  score: number;
+  passRate: string;
+  sampleCount: number;
+  trend: string;
+  description: string;
+};
+
+type LangSmithTraceReviewItem = {
+  traceId: string;
+  runId: string;
+  spanName: string;
+  evaluatorKey: string;
+  score: number;
+  verdict: '통과' | '검토 필요' | '실패';
+  inputSummary: string;
+  outputSummary: string;
+  feedbackComment: string;
+  correction: string;
+  nextAction: string;
+};
+
 type RagDocumentMetric = {
   name: string;
   references: number;
@@ -118,6 +144,7 @@ type ReportChartUnit = 'day' | 'week' | 'month';
 type ReportActorFilter = 'all' | 'auto' | 'users';
 type ReportStatusFilter = 'all' | 'success' | 'failed';
 type ReportChartMode = 'combo' | 'bar' | 'line' | 'area';
+type ChartSortOrder = 'timeAsc' | 'valueDesc' | 'valueAsc';
 
 type InteractiveReportPoint = {
   label: string;
@@ -226,6 +253,7 @@ export function WorkflowRunReportPage({
   const [actorFilter, setActorFilter] = useState<ReportActorFilter>('all');
   const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('all');
   const [chartMode, setChartMode] = useState<ReportChartMode>('combo');
+  const [executionTimeSort, setExecutionTimeSort] = useState<ChartSortOrder>('timeAsc');
   const syntheticLogs = useMemo<ExecutionLog[]>(
     () =>
       workflow?.nodes.map((node, index) => ({
@@ -247,7 +275,6 @@ export function WorkflowRunReportPage({
     [selectedWorkflow, workflow],
   );
   const displayLogs = executionLogs.length > 0 ? executionLogs : syntheticLogs;
-  const visibleWorkflowName = selectedWorkflow?.name ?? workflowName;
   const queuedFailures = failureQueue.filter((item) => item.status !== 'resolved');
   const warningWorkflowIds = new Set(
     workflows
@@ -261,8 +288,9 @@ export function WorkflowRunReportPage({
       .map((item) => item.id),
   );
   const totalDuration = displayLogs.reduce((total, log) => total + log.duration, 0);
-  const totalCredits = displayLogs.reduce((total, log) => total + log.credits, 0);
-  const totalTokens = estimateTokenUsage(totalCredits);
+  const totalTokens = estimateTokenUsage(
+    displayLogs.reduce((total, log) => total + log.credits, 0),
+  );
   const failedLogs = displayLogs.filter(
     (log) => log.status === 'Failed' || log.status === 'Blocked',
   );
@@ -277,11 +305,6 @@ export function WorkflowRunReportPage({
       log.typeLabel.includes('Knowledge') ||
       log.name.includes('RAG'),
   );
-  const slowestLog = [...displayLogs].sort(
-    (first, second) => second.duration - first.duration,
-  )[0];
-  const latestStatus =
-    displayLogs.length === 0 ? '대기' : failedLogs.length > 0 ? '실패' : '성공';
   const baseExecutions = selectedWorkflow?.executions ?? Math.max(1, summary.executions);
   const baseTokens = selectedWorkflow
     ? estimateTokenUsage(selectedWorkflow.credits)
@@ -425,6 +448,104 @@ export function WorkflowRunReportPage({
       rerunRate: hasRetriedRun ? '2.8%' : '1.2%',
     },
   ];
+  const langSmithEvaluatorMetrics: LangSmithEvaluatorMetric[] = [
+    {
+      key: 'correctness',
+      label: '정확성',
+      source: 'offline experiment',
+      target: 'root run',
+      score: 0.91,
+      passRate: '92%',
+      sampleCount: 128,
+      trend: '+6.4%',
+      description: '기대 출력과 실제 출력의 의미 일치 여부',
+    },
+    {
+      key: 'groundedness',
+      label: '근거 충실도',
+      source: 'online evaluator',
+      target: 'LLM span',
+      score: 0.86,
+      passRate: '88%',
+      sampleCount: 342,
+      trend: '+3.1%',
+      description: 'RAG 문서 근거 없이 단정한 답변을 탐지',
+    },
+    {
+      key: 'schema_validity',
+      label: 'Schema 유효성',
+      source: 'online evaluator',
+      target: 'LLM span',
+      score: failedLogs.length > 0 ? 0.89 : 0.97,
+      passRate: failedLogs.length > 0 ? '89%' : '97%',
+      sampleCount: 342,
+      trend: failedLogs.length > 0 ? '-2.0%' : '+1.2%',
+      description: 'JSON/schema 파싱 가능 여부와 필수 필드 누락 여부',
+    },
+    {
+      key: 'retrieval_relevance',
+      label: '검색 적합도',
+      source: 'online evaluator',
+      target: 'retrieval span',
+      score: ragLogs.length > 0 ? 0.82 : 0.34,
+      passRate: ragLogs.length > 0 ? '84%' : '34%',
+      sampleCount: 214,
+      trend: ragLogs.length > 0 ? '+4.8%' : '-18.0%',
+      description: '검색된 문서가 사용자 입력과 실제로 관련 있는지 평가',
+    },
+    {
+      key: 'human_review',
+      label: '사람 검수',
+      source: 'human annotation',
+      target: 'root run',
+      score: 0.78,
+      passRate: '78%',
+      sampleCount: 37,
+      trend: '+9.0%',
+      description: '운영자가 직접 남긴 평가/수정 의견 기준',
+    },
+  ];
+  const langSmithTraceReviewItems: LangSmithTraceReviewItem[] = [
+    {
+      traceId: 'trace_run_20260623_181437_u02_03',
+      runId: 'run_20260623_181437_u02',
+      spanName: 'AI Agent: 후속 작업 정리',
+      evaluatorKey: 'groundedness',
+      score: 0.42,
+      verdict: '검토 필요',
+      inputSummary: '회의록과 Notion 프로젝트 문서 2개를 근거로 후속 작업 정리 요청',
+      outputSummary: '일정 후보 2개를 제안했지만 참조 문서 근거가 부족함',
+      feedbackComment: '일정 DB에서 찾지 못한 날짜를 추천처럼 표현했습니다.',
+      correction: '근거 없음 항목은 추천하지 말고 확인 필요로 분리',
+      nextAction: 'annotation queue에 추가하고 v4 프롬프트 테스트 케이스로 승격',
+    },
+    {
+      traceId: 'trace_run_20260620_154403_cfg_02',
+      runId: 'run_20260620_154403_cfg',
+      spanName: 'LLM: 요약',
+      evaluatorKey: 'schema_validity',
+      score: 0.58,
+      verdict: '실패',
+      inputSummary: 'Gmail 미확인 메일 12건 요약 후 Slack 전송 payload 생성',
+      outputSummary: '담당자 필드가 배열이 아닌 문자열로 반환됨',
+      feedbackComment: '후속 Slack Sender에서 payload validation 실패 가능성이 큽니다.',
+      correction: 'assignees는 항상 string[]로 반환',
+      nextAction: 'schema evaluator 실패 샘플로 dataset에 저장',
+    },
+    {
+      traceId: 'trace_run_20260624_090000_sch_01',
+      runId: 'run_20260624_090000_sch',
+      spanName: 'Notion MCP',
+      evaluatorKey: 'retrieval_relevance',
+      score: 0.91,
+      verdict: '통과',
+      inputSummary: '프로젝트 키워드로 관련 Notion 페이지와 일정 DB 검색',
+      outputSummary: '상위 문서 3개와 일정 후보 4건 반환',
+      feedbackComment: '검색 결과가 최종 답변 근거로 적절하게 사용되었습니다.',
+      correction: '-',
+      nextAction: '정상 샘플로 유지',
+    },
+  ];
   const ragMetrics: RagMetric[] = [
     {
       label: '연결된 문서 수',
@@ -532,11 +653,46 @@ export function WorkflowRunReportPage({
         retried: false,
       },
     ];
+    const shouldUseLargeLogSet =
+      selectedWorkflow?.name.includes('GitHub PR Review') ||
+      workflow?.name.includes('GitHub PR Review');
+    const demoExecutors = ['김민지', '이혜연', '박준', '정형민', '윤기', '호준', '영훈'];
+    const expandedRunTemplates = shouldUseLargeLogSet
+      ? Array.from({ length: 84 }, (_, index) => {
+          const date = new Date(2026, 5, 24, 20, 30, 0);
+          date.setHours(date.getHours() - index * 3);
 
-    return runTemplates.map((template, runIndex) => {
+          const pad = (value: number) => String(value).padStart(2, '0');
+          const startedAt = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+            date.getDate(),
+          )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+          const isAuto = index % 4 === 0;
+          const hasRetry = index % 13 === 0;
+          const triggerLabel = isAuto ? 'Webhook Trigger' : '실행 버튼';
+          const executorLabel = isAuto ? '자동 실행' : demoExecutors[index % demoExecutors.length];
+          const runSuffix = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(
+            date.getDate(),
+          )}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+
+          return {
+            id: `github-pr-demo-${index + 1}`,
+            runId: `run_${runSuffix}_${isAuto ? 'webhook' : `u${pad((index % 9) + 1)}`}`,
+            startedAt,
+            triggerLabel,
+            executorLabel,
+            executionSource: isAuto ? ('자동 실행' as const) : ('수동 실행' as const),
+            durationMultiplier: Number((0.72 + (index % 9) * 0.08).toFixed(2)),
+            tokenMultiplier: Number((0.76 + (index % 11) * 0.05).toFixed(2)),
+            retried: hasRetry,
+          };
+        })
+      : runTemplates;
+
+    return expandedRunTemplates.map((template, runIndex) => {
       const nodeLogs = baseLogs.map((log, logIndex) => {
         const isSyntheticFailure =
-          runIndex === 2 && logIndex === baseLogs.length - 1 && failedLogs.length > 0;
+          (runIndex === 2 && logIndex === baseLogs.length - 1 && failedLogs.length > 0) ||
+          (shouldUseLargeLogSet && runIndex % 17 === 0 && logIndex === baseLogs.length - 1);
 
         return {
           ...log,
@@ -569,7 +725,14 @@ export function WorkflowRunReportPage({
         nodeLogs,
       };
     });
-  }, [displayLogs, failedLogs.length, selectedWorkflow?.lastRun, syntheticLogs]);
+  }, [
+    displayLogs,
+    failedLogs.length,
+    selectedWorkflow?.lastRun,
+    selectedWorkflow?.name,
+    syntheticLogs,
+    workflow?.name,
+  ]);
   const interactiveReportData = useMemo<InteractiveReportPoint[]>(() => {
     const labelsByUnit: Record<ReportChartUnit, string[]> = {
       day: ['6/17', '6/18', '6/19', '6/20', '6/21', '6/22', '6/23'],
@@ -625,7 +788,18 @@ export function WorkflowRunReportPage({
         value: item.avgDuration,
         displayValue: `${item.avgDuration}s`,
       }));
-  const maxChartValue = Math.max(1, ...chartRows.map((row) => row.value));
+  const sortedChartRows = [...chartRows].sort((first, second) => {
+    if (executionTimeSort === 'valueDesc') {
+      return second.value - first.value;
+    }
+
+    if (executionTimeSort === 'valueAsc') {
+      return first.value - second.value;
+    }
+
+    return 0;
+  });
+  const maxChartValue = Math.max(1, ...sortedChartRows.map((row) => row.value));
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <section className="mx-auto max-w-7xl">
@@ -701,37 +875,6 @@ export function WorkflowRunReportPage({
               </Card>
             )}
 
-            <Card>
-              <CardHeader>
-                <h3 className="text-lg font-black text-slate-950">최신 실행 정보</h3>
-                <p className="text-sm text-slate-500">
-                  가장 최근 실행에서 어떤 노드가 얼마만큼의 시간과 토큰을 사용했는지 확인합니다.
-                </p>
-              </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-4">
-                <LatestExecutionField
-                  label="실행 상태"
-                  value={latestStatus}
-                  description={failedLogs.length > 0 ? `실패 ${failedLogs.length}건 포함` : '정상 완료'}
-                />
-                <LatestExecutionField
-                  label="마지막 실행"
-                  value={selectedWorkflow?.lastRun ?? '최근 실행'}
-                  description={visibleWorkflowName || '워크플로우'}
-                />
-                <LatestExecutionField
-                  label="실행 시간"
-                  value={formatDuration(totalDuration)}
-                  description={slowestLog ? `가장 느린 노드 ${slowestLog.name}` : '노드 실행 합계'}
-                />
-                <LatestExecutionField
-                  label="토큰 사용량"
-                  value={totalTokens.toLocaleString('ko-KR')}
-                  description={`크레딧 ${totalCredits} 기준 추정`}
-                />
-              </CardContent>
-            </Card>
-
             <InteractiveReportChart
               data={interactiveReportData}
               metric={reportMetric}
@@ -763,20 +906,34 @@ export function WorkflowRunReportPage({
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.5fr_0.8fr]">
               <Card>
                 <CardHeader>
-                  <h3 className="text-lg font-black text-slate-950">
-                    {selectedWorkflow ? '노드별 실행 시간' : '워크플로우별 평균 실행 시간'}
-                  </h3>
-                  <p className="text-sm text-slate-500">
-                    {selectedWorkflow
-                      ? '각 노드가 실행에 사용한 시간을 비교합니다.'
-                      : '전체 워크플로우의 평균 실행 시간을 비교합니다.'}
-                  </p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-950">
+                        {selectedWorkflow ? '노드별 실행 시간' : '워크플로우별 평균 실행 시간'}
+                      </h3>
+                      <p className="text-sm text-slate-500">
+                        {selectedWorkflow
+                          ? '각 노드가 실행에 사용한 시간을 비교합니다.'
+                          : '전체 워크플로우의 평균 실행 시간을 비교합니다.'}
+                      </p>
+                    </div>
+                    <CompactSelect
+                      ariaLabel="실행 시간 그래프 정렬"
+                      value={executionTimeSort}
+                      options={[
+                        ['timeAsc', '기본순'],
+                        ['valueDesc', '시간 긴순'],
+                        ['valueAsc', '시간 짧은순'],
+                      ]}
+                      onChange={(value) => setExecutionTimeSort(value as ChartSortOrder)}
+                    />
+                  </div>
                 </CardHeader>
                 <CardContent className="grid gap-3">
-                  {chartRows.length === 0 ? (
+                  {sortedChartRows.length === 0 ? (
                     <EmptyState text="표시할 워크플로우가 없습니다." />
                   ) : (
-                    chartRows.map((row) => (
+                    sortedChartRows.map((row) => (
                       <div key={`${row.id}-${row.label}`} className="grid gap-2 md:grid-cols-[180px_1fr_64px] md:items-center">
                         <span className="truncate text-sm font-bold text-slate-700">{row.label}</span>
                         <div className="h-3 overflow-hidden rounded-full bg-slate-100">
@@ -815,6 +972,7 @@ export function WorkflowRunReportPage({
                 </p>
               </CardHeader>
               <CardContent>
+                <RunLogOverviewCharts runs={runHistory} />
                 <RunHistoryDataGrid runs={runHistory} />
               </CardContent>
             </Card>
@@ -848,6 +1006,11 @@ export function WorkflowRunReportPage({
                 ))}
               </CardContent>
             </Card>
+
+            <LangSmithEvaluationPanel
+              evaluatorMetrics={langSmithEvaluatorMetrics}
+              traceReviewItems={langSmithTraceReviewItems}
+            />
 
             <Card>
               <CardHeader>
@@ -981,6 +1144,7 @@ function LatestExecutionField({
   value: string;
   description: string;
 }) {
+  const [sortOrder, setSortOrder] = useState<ChartSortOrder>('timeAsc');
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
       <span className="block text-xs font-black text-slate-500">{label}</span>
@@ -1019,6 +1183,7 @@ function InteractiveReportChart({
   onChangeStatusFilter: (filter: ReportStatusFilter) => void;
   onChangeChartMode: (mode: ReportChartMode) => void;
 }) {
+  const [sortOrder, setSortOrder] = useState<ChartSortOrder>('timeAsc');
   const metricLabels: Record<ReportChartMetric, string> = {
     tokens: '토큰 사용량',
     avgDuration: '평균 실행 시간',
@@ -1065,6 +1230,11 @@ function InteractiveReportChart({
     ['success', '성공만'],
     ['failed', '실패만'],
   ];
+  const sortOptions: Array<[ChartSortOrder, string]> = [
+    ['timeAsc', '시간순'],
+    ['valueDesc', '값 높은순'],
+    ['valueAsc', '값 낮은순'],
+  ];
   const filteredData = data.map((point) => {
     const actorRatio =
       actorFilter === 'auto'
@@ -1096,6 +1266,17 @@ function InteractiveReportChart({
 
     return point[metric];
   };
+  const sortedData = [...filteredData].sort((first, second) => {
+    if (sortOrder === 'valueDesc') {
+      return getMetricValue(second) - getMetricValue(first);
+    }
+
+    if (sortOrder === 'valueAsc') {
+      return getMetricValue(first) - getMetricValue(second);
+    }
+
+    return 0;
+  });
   const formatMetricValue = (value: number) => {
     if (metric === 'avgDuration') {
       return `${value.toFixed(1)}s`;
@@ -1111,15 +1292,15 @@ function InteractiveReportChart({
 
     return `${Math.round(value).toLocaleString('ko-KR')}회`;
   };
-  const values = filteredData.map(getMetricValue);
+  const values = sortedData.map(getMetricValue);
   const maxValue = Math.max(1, ...values);
   const totalValue = values.reduce((total, value) => total + value, 0);
   const averageValue = totalValue / Math.max(1, values.length);
-  const peak = filteredData.reduce(
+  const peak = sortedData.reduce(
     (currentPeak, point) => (getMetricValue(point) > getMetricValue(currentPeak) ? point : currentPeak),
-    filteredData[0] ?? data[0],
+    sortedData[0] ?? data[0],
   );
-  const chartData = filteredData.map((point) => ({
+  const chartData = sortedData.map((point) => ({
     ...point,
     selectedValue: getMetricValue(point),
   }));
@@ -1195,6 +1376,12 @@ function InteractiveReportChart({
                   options={statusOptions}
                   onChange={(value) => onChangeStatusFilter(value as ReportStatusFilter)}
                 />
+                <CompactSelect
+                  ariaLabel="정렬"
+                  value={sortOrder}
+                  options={sortOptions}
+                  onChange={(value) => setSortOrder(value as ChartSortOrder)}
+                />
               </div>
             </div>
           </div>
@@ -1214,6 +1401,9 @@ function InteractiveReportChart({
             </span>
             <span className="rounded-full bg-white px-3 py-1 shadow-sm">
               {statusOptions.find(([value]) => value === statusFilter)?.[1]}
+            </span>
+            <span className="rounded-full bg-white px-3 py-1 shadow-sm">
+              {sortOptions.find(([value]) => value === sortOrder)?.[1]}
             </span>
           </div>
         </div>
@@ -1489,11 +1679,35 @@ function PeriodSummaryCard({ period }: { period: PeriodUsage }) {
 }
 
 function TokenUsageChart({ periods }: { periods: PeriodUsage[] }) {
-  const maxTokens = Math.max(1, ...periods.map((period) => period.tokens));
+  const [sortOrder, setSortOrder] = useState<ChartSortOrder>('timeAsc');
+  const sortedPeriods = [...periods].sort((first, second) => {
+    if (sortOrder === 'valueDesc') {
+      return second.tokens - first.tokens;
+    }
+
+    if (sortOrder === 'valueAsc') {
+      return first.tokens - second.tokens;
+    }
+
+    return 0;
+  });
+  const maxTokens = Math.max(1, ...sortedPeriods.map((period) => period.tokens));
   const yTicks = [maxTokens, Math.round(maxTokens / 2), 0];
 
   return (
     <div className="grid gap-3">
+      <div className="flex justify-end">
+        <CompactSelect
+          ariaLabel="기간별 토큰 정렬"
+          value={sortOrder}
+          options={[
+            ['timeAsc', '기간순'],
+            ['valueDesc', '토큰 많은순'],
+            ['valueAsc', '토큰 적은순'],
+          ]}
+          onChange={(value) => setSortOrder(value as ChartSortOrder)}
+        />
+      </div>
       <div className="grid grid-cols-[64px_1fr] gap-3">
         <div className="relative flex h-64 flex-col justify-between text-right text-[11px] font-semibold text-slate-400">
           {yTicks.map((tick) => (
@@ -1507,7 +1721,7 @@ function TokenUsageChart({ periods }: { periods: PeriodUsage[] }) {
           <div className="absolute inset-x-4 top-0 border-t border-dashed border-slate-200" />
           <div className="absolute inset-x-4 top-1/2 border-t border-dashed border-slate-200" />
           <div className="flex h-full items-end justify-around gap-3">
-            {periods.map((period) => {
+            {sortedPeriods.map((period) => {
               const height = Math.max(6, (period.tokens / maxTokens) * 100);
 
               return (
@@ -1532,7 +1746,7 @@ function TokenUsageChart({ periods }: { periods: PeriodUsage[] }) {
       <div className="grid grid-cols-[64px_1fr] gap-3">
         <span />
         <div className="flex justify-around gap-3 pl-4 text-center text-xs font-black text-slate-500">
-          {periods.map((period) => (
+          {sortedPeriods.map((period) => (
             <span key={period.label} className="flex-1">
               {period.label}
             </span>
@@ -1565,11 +1779,216 @@ function QualityMetricCard({ metric }: { metric: LlmQualityMetric }) {
   );
 }
 
+function LangSmithEvaluationPanel({
+  evaluatorMetrics,
+  traceReviewItems,
+}: {
+  evaluatorMetrics: LangSmithEvaluatorMetric[];
+  traceReviewItems: LangSmithTraceReviewItem[];
+}) {
+  const averageScore =
+    evaluatorMetrics.reduce((total, metric) => total + metric.score, 0) /
+    Math.max(1, evaluatorMetrics.length);
+  const reviewQueueCount = traceReviewItems.filter((item) => item.verdict !== '통과').length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="text-lg font-black text-slate-950">LangSmith 평가 운영</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              trace/run/span에 붙은 evaluator 점수와 사람 검수 대상을 한 화면에서 봅니다.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">평균 {Math.round(averageScore * 100)}점</Badge>
+            <Badge variant={reviewQueueCount > 0 ? 'warning' : 'success'}>
+              검토 큐 {reviewQueueCount}건
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 md:grid-cols-4">
+          <LangSmithFlowCard
+            title="Dataset"
+            value="128 examples"
+            description="수동 케이스, 운영 trace, 실패 샘플을 평가용 입력/기대 출력으로 관리"
+          />
+          <LangSmithFlowCard
+            title="Experiment"
+            value="v1 -> v3"
+            description="프롬프트/모델/설정 버전별 결과와 evaluator 점수 비교"
+          />
+          <LangSmithFlowCard
+            title="Online Eval"
+            value="342 traces"
+            description="운영 실행을 실시간으로 scoring하고 이상 징후를 감지"
+          />
+          <LangSmithFlowCard
+            title="Annotation"
+            value={`${reviewQueueCount} queued`}
+            description="사람 검수가 필요한 run/span을 큐에 쌓고 correction을 기록"
+          />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {evaluatorMetrics.map((metric) => (
+            <LangSmithEvaluatorCard key={metric.key} metric={metric} />
+          ))}
+        </div>
+
+        <LangSmithTraceReviewTable items={traceReviewItems} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function LangSmithFlowCard({
+  title,
+  value,
+  description,
+}: {
+  title: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <span className="text-xs font-black text-slate-400">{title}</span>
+      <strong className="mt-2 block text-xl font-black text-slate-950">{value}</strong>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </article>
+  );
+}
+
+function LangSmithEvaluatorCard({ metric }: { metric: LangSmithEvaluatorMetric }) {
+  const score = Math.round(metric.score * 100);
+  const isRisk = score < 80;
+
+  return (
+    <article
+      className={cn(
+        'rounded-lg border bg-white p-4',
+        isRisk ? 'border-amber-200 bg-amber-50' : 'border-slate-200',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <strong className="block text-sm font-black text-slate-950">{metric.label}</strong>
+          <span className="mt-1 block font-mono text-[11px] font-bold text-slate-400">
+            {metric.key}
+          </span>
+        </div>
+        <span className={cn('text-xs font-black', isRisk ? 'text-amber-700' : 'text-emerald-700')}>
+          {metric.trend}
+        </span>
+      </div>
+      <div className="mt-4">
+        <span className="text-3xl font-black text-slate-950">{score}</span>
+        <span className="ml-1 text-xs font-bold text-slate-400">/ 100</span>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+        <span
+          className={cn('block h-full rounded-full', isRisk ? 'bg-amber-500' : 'bg-emerald-500')}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+      <div className="mt-3 grid gap-1 text-xs text-slate-500">
+        <span>통과율 {metric.passRate} · 샘플 {metric.sampleCount}개</span>
+        <span>{metric.source} · {metric.target}</span>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">{metric.description}</p>
+    </article>
+  );
+}
+
+function LangSmithTraceReviewTable({ items }: { items: LangSmithTraceReviewItem[] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="min-w-[1320px]">
+        <div className="grid grid-cols-[170px_170px_150px_130px_80px_100px_220px_220px_220px_180px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black text-slate-400">
+          <span>trace id</span>
+          <span>run id</span>
+          <span>span</span>
+          <span>evaluator</span>
+          <span className="text-right">score</span>
+          <span>판정</span>
+          <span>입력 요약</span>
+          <span>출력 요약</span>
+          <span>피드백/수정</span>
+          <span>다음 액션</span>
+        </div>
+        {items.map((item) => (
+          <div
+            key={item.traceId}
+            className="grid grid-cols-[170px_170px_150px_130px_80px_100px_220px_220px_220px_180px] gap-3 border-b border-slate-100 px-4 py-3 text-xs last:border-b-0"
+          >
+            <span className="truncate font-mono font-black text-blue-700">{item.traceId}</span>
+            <span className="truncate font-mono text-slate-600">{item.runId}</span>
+            <span className="truncate font-bold text-slate-700">{item.spanName}</span>
+            <span className="font-mono text-slate-600">{item.evaluatorKey}</span>
+            <span className="text-right font-black text-slate-950">
+              {Math.round(item.score * 100)}
+            </span>
+            <span>
+              <Badge
+                variant={
+                  item.verdict === '통과'
+                    ? 'success'
+                    : item.verdict === '실패'
+                      ? 'warning'
+                      : 'secondary'
+                }
+              >
+                {item.verdict}
+              </Badge>
+            </span>
+            <span className="max-h-10 overflow-hidden text-slate-600">{item.inputSummary}</span>
+            <span className="max-h-10 overflow-hidden text-slate-600">{item.outputSummary}</span>
+            <span className="max-h-10 overflow-hidden text-slate-600">
+              {item.feedbackComment} / {item.correction}
+            </span>
+            <span className="max-h-10 overflow-hidden font-bold text-slate-700">
+              {item.nextAction}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function QualityTrendChart({ points }: { points: QualityTrendPoint[] }) {
+  const [sortOrder, setSortOrder] = useState<ChartSortOrder>('timeAsc');
+  const sortedPoints = [...points].sort((first, second) => {
+    if (sortOrder === 'valueDesc') {
+      return second.score - first.score;
+    }
+
+    if (sortOrder === 'valueAsc') {
+      return first.score - second.score;
+    }
+
+    return 0;
+  });
   const maxScore = 100;
 
   return (
     <div className="grid gap-3">
+      <div className="flex justify-end">
+        <CompactSelect
+          ariaLabel="품질 점수 정렬"
+          value={sortOrder}
+          options={[
+            ['timeAsc', '날짜순'],
+            ['valueDesc', '점수 높은순'],
+            ['valueAsc', '점수 낮은순'],
+          ]}
+          onChange={(value) => setSortOrder(value as ChartSortOrder)}
+        />
+      </div>
       <div className="grid grid-cols-[48px_1fr] gap-3">
         <div className="relative flex h-64 flex-col justify-between text-right text-[11px] font-semibold text-slate-400">
           {[100, 75, 50].map((tick) => (
@@ -1583,7 +2002,7 @@ function QualityTrendChart({ points }: { points: QualityTrendPoint[] }) {
           <div className="absolute inset-x-4 top-0 border-t border-dashed border-slate-200" />
           <div className="absolute inset-x-4 top-1/2 border-t border-dashed border-slate-200" />
           <div className="flex h-full items-end justify-around gap-3">
-            {points.map((point) => (
+            {sortedPoints.map((point) => (
               <div key={point.label} className="flex h-full flex-1 flex-col justify-end">
                 <div className="flex flex-col items-center gap-2">
                   <span className="text-[11px] font-black text-slate-600">{point.score}</span>
@@ -1602,7 +2021,7 @@ function QualityTrendChart({ points }: { points: QualityTrendPoint[] }) {
       <div className="grid grid-cols-[48px_1fr] gap-3">
         <span />
         <div className="flex justify-around gap-3 pl-4 text-center text-xs font-black text-slate-500">
-          {points.map((point) => (
+          {sortedPoints.map((point) => (
             <span key={point.label} className="flex-1">
               {point.label}
             </span>
@@ -1614,10 +2033,23 @@ function QualityTrendChart({ points }: { points: QualityTrendPoint[] }) {
 }
 
 function ConfigChangeScoreChart({ changes }: { changes: LlmConfigChange[] }) {
-  const chartData = changes.map((change) => ({
-    version: change.version,
-    qualityScore: change.qualityScore,
-  }));
+  const [sortOrder, setSortOrder] = useState<ChartSortOrder>('timeAsc');
+  const chartData = [...changes]
+    .sort((first, second) => {
+      if (sortOrder === 'valueDesc') {
+        return second.qualityScore - first.qualityScore;
+      }
+
+      if (sortOrder === 'valueAsc') {
+        return first.qualityScore - second.qualityScore;
+      }
+
+      return 0;
+    })
+    .map((change) => ({
+      version: change.version,
+      qualityScore: change.qualityScore,
+    }));
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -1628,7 +2060,19 @@ function ConfigChangeScoreChart({ changes }: { changes: LlmConfigChange[] }) {
             프롬프트와 모델 설정이 바뀐 시점별 품질 점수 추이입니다.
           </p>
         </div>
-        <Badge variant="secondary">Prompt/config version</Badge>
+        <div className="flex items-center gap-2">
+          <CompactSelect
+            ariaLabel="설정 버전 품질 정렬"
+            value={sortOrder}
+            options={[
+              ['timeAsc', '버전순'],
+              ['valueDesc', '점수 높은순'],
+              ['valueAsc', '점수 낮은순'],
+            ]}
+            onChange={(value) => setSortOrder(value as ChartSortOrder)}
+          />
+          <Badge variant="secondary">Prompt/config version</Badge>
+        </div>
       </div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
@@ -1847,6 +2291,244 @@ function RagDocumentTable({ documents }: { documents: RagDocumentMetric[] }) {
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function RunLogOverviewCharts({ runs }: { runs: WorkflowRunHistoryEntry[] }) {
+  const [sortOrder, setSortOrder] = useState<
+    'timeAsc' | 'durationDesc' | 'tokensDesc' | 'costDesc' | 'failedDesc'
+  >('timeAsc');
+  const chartData = runs
+    .slice()
+    .reverse()
+    .map((run) => ({
+      label: run.startedAt.slice(5, 16),
+      runId: run.runId,
+      duration: Number(run.duration.toFixed(2)),
+      tokens: run.tokens,
+      cost: run.costUsd,
+      failedNodes: run.nodeLogs.filter((log) => log.status !== 'Success').length,
+      retried: run.retried ? 1 : 0,
+    }))
+    .sort((first, second) => {
+      if (sortOrder === 'durationDesc') {
+        return second.duration - first.duration;
+      }
+
+      if (sortOrder === 'tokensDesc') {
+        return second.tokens - first.tokens;
+      }
+
+      if (sortOrder === 'costDesc') {
+        return second.cost - first.cost;
+      }
+
+      if (sortOrder === 'failedDesc') {
+        return second.failedNodes - first.failedNodes;
+      }
+
+      return 0;
+    });
+  const totalFailedNodes = chartData.reduce((total, item) => total + item.failedNodes, 0);
+  const maxDuration = Math.max(1, ...chartData.map((item) => item.duration));
+  const maxTokens = Math.max(1, ...chartData.map((item) => item.tokens));
+
+  return (
+    <div className="mb-5 grid gap-4">
+      <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <strong className="text-sm font-black text-slate-950">실행 로그 그래프 정렬</strong>
+          <p className="mt-1 text-xs text-slate-500">
+            토큰, 비용, 실행 시간, 실패 노드가 큰 실행을 먼저 볼 수 있습니다.
+          </p>
+        </div>
+        <CompactSelect
+          ariaLabel="실행 로그 그래프 정렬"
+          value={sortOrder}
+          options={[
+            ['timeAsc', '시간순'],
+            ['tokensDesc', '토큰 많은순'],
+            ['durationDesc', '실행 시간 긴순'],
+            ['costDesc', '비용 높은순'],
+            ['failedDesc', '실패 노드 많은순'],
+          ]}
+          onChange={(value) =>
+            setSortOrder(value as 'timeAsc' | 'durationDesc' | 'tokensDesc' | 'costDesc' | 'failedDesc')
+          }
+        />
+      </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        <LatestExecutionField
+          label="로그 수"
+          value={`${runs.length}건`}
+          description="현재 필터 전 전체 실행 이력"
+        />
+        <LatestExecutionField
+          label="최대 실행 시간"
+          value={formatDuration(maxDuration)}
+          description="실행별 총 소요 시간 기준"
+        />
+        <LatestExecutionField
+          label="최대 토큰"
+          value={maxTokens.toLocaleString('ko-KR')}
+          description="실행 1건 기준 최대 사용량"
+        />
+        <LatestExecutionField
+          label="실패 노드"
+          value={`${totalFailedNodes}개`}
+          description="최근 실행 로그 내 실패/차단 노드 합계"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.35fr_0.9fr]">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-base font-black text-slate-950">실행별 시간/토큰 추이</h4>
+              <p className="mt-1 text-sm text-slate-500">
+                막대는 토큰 사용량, 선은 실행 소요 시간을 의미합니다.
+              </p>
+            </div>
+            <Badge variant="secondary">duration + tokens</Badge>
+          </div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 16, right: 18, bottom: 4, left: 8 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }}
+                />
+                <YAxis
+                  yAxisId="tokens"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
+                  width={64}
+                />
+                <YAxis
+                  yAxisId="duration"
+                  orientation="right"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
+                  width={48}
+                />
+                <Tooltip
+                  cursor={{ fill: '#f8fafc' }}
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) {
+                      return null;
+                    }
+
+                    const item = chartData.find((row) => row.label === label);
+
+                    return (
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+                        <strong className="block text-slate-950">{item?.runId ?? label}</strong>
+                        <span className="mt-1 block text-slate-600">
+                          토큰 {item?.tokens.toLocaleString('ko-KR')} · 시간 {item?.duration}s
+                        </span>
+                        <span className="mt-1 block text-slate-600">
+                          비용 ${item?.cost.toFixed(4)} · 실패 노드 {item?.failedNodes}개
+                        </span>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar
+                  yAxisId="tokens"
+                  dataKey="tokens"
+                  fill="#0f172a"
+                  radius={[6, 6, 0, 0]}
+                  isAnimationActive={false}
+                />
+                <Line
+                  yAxisId="duration"
+                  type="monotone"
+                  dataKey="duration"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  dot={{ r: 3, strokeWidth: 2, fill: '#ffffff' }}
+                  activeDot={{ r: 5, strokeWidth: 2, fill: '#ffffff' }}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-base font-black text-slate-950">실패/재시도 신호</h4>
+              <p className="mt-1 text-sm text-slate-500">
+                실행별 실패 노드 수와 재시도 여부를 함께 봅니다.
+              </p>
+            </div>
+            <Badge variant="secondary">ops signal</Badge>
+          </div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 16, right: 12, bottom: 4, left: 0 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
+                  width={34}
+                />
+                <Tooltip
+                  cursor={{ fill: '#f8fafc' }}
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) {
+                      return null;
+                    }
+
+                    const item = chartData.find((row) => row.label === label);
+
+                    return (
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+                        <strong className="block text-slate-950">{item?.runId ?? label}</strong>
+                        <span className="mt-1 block text-red-600">
+                          실패 노드 {item?.failedNodes}개
+                        </span>
+                        <span className="mt-1 block text-slate-600">
+                          재시도 {item?.retried ? '있음' : '없음'}
+                        </span>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar
+                  dataKey="failedNodes"
+                  fill="#ef4444"
+                  radius={[6, 6, 0, 0]}
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="stepAfter"
+                  dataKey="retried"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={{ r: 3, strokeWidth: 2, fill: '#ffffff' }}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2154,127 +2836,135 @@ function RunHistoryDataGrid({ runs }: { runs: WorkflowRunHistoryEntry[] }) {
         </div>
       </div>
 
-      <div className="max-h-[560px] overflow-auto rounded-xl border border-slate-200 bg-white">
-        <table className="min-w-[1220px] w-full border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  const sortState = header.column.getIsSorted();
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
+        <div className="grid min-w-0 gap-3">
+          <div className="max-h-[560px] overflow-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-[1220px] w-full border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => {
+                      const sortState = header.column.getIsSorted();
 
-                  return (
-                    <th
-                      key={header.id}
-                      className="border-b border-slate-200 px-4 py-3 text-left text-xs font-black text-slate-400"
-                    >
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 hover:text-slate-700"
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <span className="text-[10px]">
-                          {sortState === 'asc' ? '↑' : sortState === 'desc' ? '↓' : '↕'}
-                        </span>
-                      </button>
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {visibleRows.length > 0 ? (
-              visibleRows.map((row) => {
-                const isSelected = row.original.id === selectedRun?.id;
-
-                return (
-                  <tr
-                    key={row.id}
-                    className={cn(
-                      'cursor-pointer border-b border-slate-100 transition hover:bg-slate-50',
-                      isSelected && 'bg-blue-50/70',
-                    )}
-                    onClick={() => setSelectedRunId(row.original.id)}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 text-xs text-slate-700">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
+                      return (
+                        <th
+                          key={header.id}
+                          className="border-b border-slate-200 px-4 py-3 text-left text-xs font-black text-slate-400"
+                        >
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 hover:text-slate-700"
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            <span className="text-[10px]">
+                              {sortState === 'asc' ? '↑' : sortState === 'desc' ? '↓' : '↕'}
+                            </span>
+                          </button>
+                        </th>
+                      );
+                    })}
                   </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td
-                  colSpan={table.getAllLeafColumns().length}
-                  className="px-4 py-10 text-center text-sm font-bold text-slate-400"
-                >
-                  조건에 맞는 실행 로그가 없습니다.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                ))}
+              </thead>
+              <tbody>
+                {visibleRows.length > 0 ? (
+                  visibleRows.map((row) => {
+                    const isSelected = row.original.id === selectedRun?.id;
 
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-500">
-        <span>
-          {filteredRuns.length.toLocaleString('ko-KR')}건 표시 / 전체 {runs.length.toLocaleString('ko-KR')}건
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={safePageIndex === 0}
-            onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-          >
-            이전
-          </Button>
-          <span>
-            {safePageIndex + 1} / {totalPages} 페이지
-          </span>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={safePageIndex >= totalPages - 1}
-            onClick={() => setPageIndex((current) => Math.min(totalPages - 1, current + 1))}
-          >
-            다음
-          </Button>
-        </div>
-      </div>
+                    return (
+                      <tr
+                        key={row.id}
+                        className={cn(
+                          'cursor-pointer border-b border-slate-100 transition hover:bg-slate-50',
+                          isSelected && 'bg-blue-50/70',
+                        )}
+                        onClick={() => setSelectedRunId(row.original.id)}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-4 py-3 text-xs text-slate-700">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={table.getAllLeafColumns().length}
+                      className="px-4 py-10 text-center text-sm font-bold text-slate-400"
+                    >
+                      조건에 맞는 실행 로그가 없습니다.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-      {selectedRun && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <strong className="text-sm font-black text-slate-950">선택한 실행 상세</strong>
-              <p className="mt-1 text-xs text-slate-500">
-                행을 클릭하면 해당 실행의 노드별 trace를 아래에서 확인합니다.
-              </p>
-            </div>
-            <span className="rounded-md bg-white px-3 py-2 font-mono text-xs font-black text-blue-700">
-              {selectedRun.runId}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-slate-500">
+            <span>
+              {filteredRuns.length.toLocaleString('ko-KR')}건 표시 / 전체 {runs.length.toLocaleString('ko-KR')}건
             </span>
-          </div>
-          <div className="grid gap-3 border-t border-blue-100 pt-3">
-            <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600 md:grid-cols-3">
-              <RunMeta label="실행 ID" value={selectedRun.runId} />
-              <RunMeta label="실행 방식" value={selectedRun.executionSource} />
-              <RunMeta label="실행자" value={selectedRun.executorLabel} />
-              <RunMeta label="트리거" value={selectedRun.triggerLabel} />
-              <RunMeta label="시작 시각" value={selectedRun.startedAt} />
-              <RunMeta label="종료 시각" value={selectedRun.endedAt} />
-              <RunMeta label="재시도" value={selectedRun.retried ? '있음' : '없음'} />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={safePageIndex === 0}
+                onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
+              >
+                이전
+              </Button>
+              <span>
+                {safePageIndex + 1} / {totalPages} 페이지
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={safePageIndex >= totalPages - 1}
+                onClick={() => setPageIndex((current) => Math.min(totalPages - 1, current + 1))}
+              >
+                다음
+              </Button>
             </div>
-            <NodeTraceTable run={selectedRun} />
           </div>
         </div>
-      )}
+
+        <aside className="min-w-0 xl:sticky xl:top-6 xl:self-start">
+          {selectedRun ? (
+            <div className="max-h-[760px] overflow-auto rounded-xl border border-blue-200 bg-blue-50/40 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <strong className="text-sm font-black text-slate-950">선택한 실행 상세</strong>
+                  <p className="mt-1 text-xs text-slate-500">
+                    왼쪽 표의 행을 클릭하면 이 패널이 갱신됩니다.
+                  </p>
+                </div>
+                <span className="rounded-md bg-white px-3 py-2 font-mono text-xs font-black text-blue-700">
+                  {selectedRun.runId}
+                </span>
+              </div>
+              <div className="grid gap-3 border-t border-blue-100 pt-3">
+                <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600">
+                  <RunMeta label="실행 ID" value={selectedRun.runId} />
+                  <RunMeta label="실행 방식" value={selectedRun.executionSource} />
+                  <RunMeta label="실행자" value={selectedRun.executorLabel} />
+                  <RunMeta label="트리거" value={selectedRun.triggerLabel} />
+                  <RunMeta label="시작 시각" value={selectedRun.startedAt} />
+                  <RunMeta label="종료 시각" value={selectedRun.endedAt} />
+                  <RunMeta label="재시도" value={selectedRun.retried ? '있음' : '없음'} />
+                </div>
+                <NodeTraceTable run={selectedRun} compact />
+              </div>
+            </div>
+          ) : (
+            <EmptyState text="선택한 실행 로그가 없습니다." />
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
@@ -2343,7 +3033,13 @@ function RunMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function NodeTraceTable({ run }: { run: WorkflowRunHistoryEntry }) {
+function NodeTraceTable({
+  run,
+  compact = false,
+}: {
+  run: WorkflowRunHistoryEntry;
+  compact?: boolean;
+}) {
   const rows: NodeTraceRow[] = run.nodeLogs.map((log, index) => {
     const tokens = estimateTokenUsage(log.credits);
 
@@ -2364,7 +3060,7 @@ function NodeTraceTable({ run }: { run: WorkflowRunHistoryEntry }) {
   return (
     <div className="grid gap-3">
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <div className="min-w-[1320px]">
+        <div className={compact ? 'min-w-[980px]' : 'min-w-[1320px]'}>
           <div className="grid grid-cols-[140px_82px_210px_210px_130px_90px_80px_160px_72px_150px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">
             <span>노드</span>
             <span>상태</span>
