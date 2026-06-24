@@ -43,17 +43,81 @@ type PeriodUsage = {
 
 type WorkflowRunHistoryEntry = {
   id: string;
+  runId: string;
   startedAt: string;
+  endedAt: string;
   triggerLabel: string;
   executorLabel: string;
   executionSource: '자동 실행' | '수동 실행';
   status: '성공' | '실패';
   duration: number;
   tokens: number;
+  costUsd: number;
+  retried: boolean;
   nodeLogs: ExecutionLog[];
 };
 
+type NodeTraceRow = {
+  log: ExecutionLog;
+  inputSummary: string;
+  outputSummary: string;
+  model: string;
+  tokens: number;
+  costUsd: number;
+  retried: boolean;
+  traceId: string;
+};
+
 const estimateTokenUsage = (credits: number) => Math.max(0, Math.round(credits * 1250));
+
+const estimateCost = (tokens: number) => Number(((tokens / 1000) * 0.006).toFixed(4));
+
+const addSeconds = (startedAt: string, seconds: number) => {
+  const [datePart, timePart] = startedAt.split(' ');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute, second] = timePart.split(':').map(Number);
+  const date = new Date(year, month - 1, day, hour, minute, second);
+
+  date.setSeconds(date.getSeconds() + Math.max(1, Math.round(seconds)));
+
+  const pad = (value: number) => String(value).padStart(2, '0');
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+const getModelForNode = (log: ExecutionLog) => {
+  if (log.typeLabel.includes('AI Agent')) {
+    return 'gpt-4o-mini';
+  }
+
+  if (log.typeLabel.includes('LLM')) {
+    return 'gpt-4.1-mini';
+  }
+
+  if (log.typeLabel.includes('Notion')) {
+    return 'notion-mcp';
+  }
+
+  if (log.typeLabel.includes('Slack')) {
+    return 'slack-mcp';
+  }
+
+  if (log.typeLabel.includes('Gmail')) {
+    return 'gmail-reader';
+  }
+
+  return 'system';
+};
+
+const buildInputSummary = (log: ExecutionLog) =>
+  `${log.typeLabel} 입력 컨텍스트와 이전 노드 결과를 전달`;
+
+const buildOutputSummary = (log: ExecutionLog) =>
+  log.status === 'Success'
+    ? `${log.name} 처리 결과를 다음 노드로 전달`
+    : log.message ?? `${log.name} 실행 중 오류 발생`;
 
 export function WorkflowRunReportPage({
   workflowName,
@@ -134,48 +198,58 @@ export function WorkflowRunReportPage({
     const runTemplates = [
       {
         id: 'latest',
+        runId: 'run_20260624_194218_a01',
         startedAt: '2026-06-24 19:42:18',
         triggerLabel: '실행 버튼',
         executorLabel: '김민지',
         executionSource: '수동 실행' as const,
         durationMultiplier: 1,
         tokenMultiplier: 1,
+        retried: false,
       },
       {
         id: 'auto-1',
+        runId: 'run_20260624_090000_sch',
         startedAt: '2026-06-24 09:00:00',
         triggerLabel: 'Time Trigger',
         executorLabel: '자동 실행',
         executionSource: '자동 실행' as const,
         durationMultiplier: 0.92,
         tokenMultiplier: 0.88,
+        retried: false,
       },
       {
         id: 'manual-2',
+        runId: 'run_20260623_181437_u02',
         startedAt: '2026-06-23 18:14:37',
         triggerLabel: '실행 버튼',
         executorLabel: '이혜연',
         executionSource: '수동 실행' as const,
         durationMultiplier: 1.18,
         tokenMultiplier: 1.12,
+        retried: true,
       },
       {
         id: 'auto-3',
+        runId: 'run_20260623_090000_sch',
         startedAt: '2026-06-23 09:00:00',
         triggerLabel: 'Time Trigger',
         executorLabel: '자동 실행',
         executionSource: '자동 실행' as const,
         durationMultiplier: 0.86,
         tokenMultiplier: 0.8,
+        retried: false,
       },
       {
         id: 'manual-4',
+        runId: 'run_20260622_163205_web',
         startedAt: '2026-06-22 16:32:05',
         triggerLabel: 'Webhook Trigger',
         executorLabel: '박준',
         executionSource: '수동 실행' as const,
         durationMultiplier: 1.05,
         tokenMultiplier: 1.02,
+        retried: false,
       },
     ];
 
@@ -196,16 +270,22 @@ export function WorkflowRunReportPage({
       });
       const hasFailure = nodeLogs.some((log) => log.status !== 'Success');
       const runCredits = nodeLogs.reduce((total, log) => total + log.credits, 0);
+      const duration = nodeLogs.reduce((total, log) => total + log.duration, 0);
+      const tokens = estimateTokenUsage(runCredits);
 
       return {
         id: template.id,
+        runId: template.runId,
         startedAt: template.startedAt,
+        endedAt: addSeconds(template.startedAt, duration),
         triggerLabel: template.triggerLabel,
         executorLabel: template.executorLabel,
         executionSource: template.executionSource,
         status: hasFailure ? '실패' : '성공',
-        duration: nodeLogs.reduce((total, log) => total + log.duration, 0),
-        tokens: estimateTokenUsage(runCredits),
+        duration,
+        tokens,
+        costUsd: estimateCost(tokens),
+        retried: template.retried,
         nodeLogs,
       };
     });
@@ -398,15 +478,18 @@ export function WorkflowRunReportPage({
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
-                  <div className="grid min-w-[850px] gap-3">
-                    <div className="grid grid-cols-[180px_84px_88px_120px_64px_74px_100px] gap-3 px-4 text-xs font-black text-slate-400">
-                      <span>실행 시각</span>
+                  <div className="grid min-w-[1320px] gap-3">
+                    <div className="grid grid-cols-[170px_160px_160px_72px_84px_92px_80px_72px_80px_72px] gap-3 px-4 text-xs font-black text-slate-400">
+                      <span>실행 ID</span>
+                      <span>시작 시각</span>
+                      <span>종료 시각</span>
                       <span>방식</span>
                       <span>실행자</span>
-                      <span>트리거</span>
                       <span>상태</span>
-                      <span className="text-right">시간</span>
+                      <span className="text-right">소요 시간</span>
                       <span className="text-right">토큰</span>
+                      <span className="text-right">비용</span>
+                      <span>재시도</span>
                     </div>
                     {runHistory.map((run) => (
                       <RunHistoryCard key={run.id} run={run} />
@@ -572,36 +655,46 @@ function RunHistoryCard({ run }: { run: WorkflowRunHistoryEntry }) {
         isFailed ? 'border-red-200 bg-red-50' : 'border-slate-200',
       )}
     >
-      <summary className="grid cursor-pointer list-none grid-cols-[180px_84px_88px_120px_64px_74px_100px] items-center gap-3 px-4 py-3 text-sm transition hover:bg-slate-50">
-        <span className="font-black text-slate-950">{run.startedAt}</span>
+      <summary className="grid cursor-pointer list-none grid-cols-[170px_160px_160px_72px_84px_92px_80px_72px_80px_72px] items-center gap-3 px-4 py-3 text-sm transition hover:bg-slate-50">
+        <span className="truncate font-mono text-xs font-black text-slate-950">
+          {run.runId}
+        </span>
+        <span className="font-mono text-xs font-bold text-slate-700">
+          {run.startedAt}
+        </span>
+        <span className="font-mono text-xs font-bold text-slate-700">
+          {run.endedAt}
+        </span>
         <span className="text-xs font-bold text-slate-600">{run.executionSource}</span>
         <span className="truncate text-xs font-bold text-slate-600">
           {run.executorLabel}
-        </span>
-        <span className="truncate text-xs font-bold text-slate-500">
-          {run.triggerLabel}
         </span>
         <Badge variant={isFailed ? 'warning' : 'success'}>{run.status}</Badge>
         <span className="text-right text-xs font-black text-slate-600">
           {formatDuration(run.duration)}
         </span>
         <span className="text-right text-xs font-black text-slate-600">
-          {run.tokens.toLocaleString('ko-KR')} tokens
+          {run.tokens.toLocaleString('ko-KR')}
+        </span>
+        <span className="text-right text-xs font-black text-slate-600">
+          ${run.costUsd.toFixed(4)}
+        </span>
+        <span className="text-xs font-bold text-slate-600">
+          {run.retried ? '있음' : '없음'}
         </span>
       </summary>
 
       <div className="grid gap-3 border-t border-slate-200 p-4">
-        <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600 md:grid-cols-2">
+        <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600 md:grid-cols-3">
+          <RunMeta label="실행 ID" value={run.runId} />
           <RunMeta label="실행 방식" value={run.executionSource} />
           <RunMeta label="실행자" value={run.executorLabel} />
           <RunMeta label="트리거" value={run.triggerLabel} />
           <RunMeta label="시작 시각" value={run.startedAt} />
+          <RunMeta label="종료 시각" value={run.endedAt} />
+          <RunMeta label="재시도" value={run.retried ? '있음' : '없음'} />
         </div>
-        <div className="grid gap-2">
-          {run.nodeLogs.map((log) => (
-            <NodeLogRow key={`${run.id}-${log.nodeId}-${log.name}`} log={log} compact />
-          ))}
-        </div>
+        <NodeTraceTable run={run} />
       </div>
     </details>
   );
@@ -612,6 +705,77 @@ function RunMeta({ label, value }: { label: string; value: string }) {
     <div className="grid grid-cols-[72px_1fr] gap-2">
       <span className="font-black text-slate-500">{label}</span>
       <span className="min-w-0 break-words text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function NodeTraceTable({ run }: { run: WorkflowRunHistoryEntry }) {
+  const rows: NodeTraceRow[] = run.nodeLogs.map((log, index) => {
+    const tokens = estimateTokenUsage(log.credits);
+
+    return {
+      log,
+      inputSummary: buildInputSummary(log),
+      outputSummary: buildOutputSummary(log),
+      model: getModelForNode(log),
+      tokens,
+      costUsd: estimateCost(tokens),
+      retried: run.retried && index === run.nodeLogs.length - 1,
+      traceId: `trace_${run.runId}_${String(index + 1).padStart(2, '0')}`,
+    };
+  });
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="min-w-[1320px]">
+        <div className="grid grid-cols-[140px_82px_210px_210px_130px_90px_80px_160px_72px_150px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">
+          <span>노드</span>
+          <span>상태</span>
+          <span>입력 요약</span>
+          <span>출력 요약</span>
+          <span>사용 모델</span>
+          <span className="text-right">토큰</span>
+          <span className="text-right">비용</span>
+          <span>에러 메시지</span>
+          <span>재시도</span>
+          <span>실행 트레이스 보기</span>
+        </div>
+        {rows.map((row) => {
+          const isSuccess = row.log.status === 'Success';
+
+          return (
+            <div
+              key={row.traceId}
+              className="grid grid-cols-[140px_82px_210px_210px_130px_90px_80px_160px_72px_150px] gap-3 border-b border-slate-100 px-3 py-3 text-xs last:border-b-0"
+            >
+              <span className="truncate font-black text-slate-950">{row.log.name}</span>
+              <Badge variant={isSuccess ? 'success' : 'warning'}>
+                {isSuccess ? '성공' : '실패'}
+              </Badge>
+              <span className="max-h-10 overflow-hidden text-slate-600">{row.inputSummary}</span>
+              <span className="max-h-10 overflow-hidden text-slate-600">{row.outputSummary}</span>
+              <span className="truncate font-mono text-slate-600">{row.model}</span>
+              <span className="text-right font-black text-slate-700">
+                {row.tokens.toLocaleString('ko-KR')}
+              </span>
+              <span className="text-right font-black text-slate-700">
+                ${row.costUsd.toFixed(4)}
+              </span>
+              <span className={cn('max-h-10 overflow-hidden', isSuccess ? 'text-slate-400' : 'text-red-600')}>
+                {isSuccess ? '-' : row.log.message ?? '외부 도구 응답 실패'}
+              </span>
+              <span className="font-bold text-slate-600">{row.retried ? '있음' : '없음'}</span>
+              <button
+                type="button"
+                className="truncate text-left font-black text-blue-600 hover:text-blue-800"
+                title={row.traceId}
+              >
+                {row.traceId}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
