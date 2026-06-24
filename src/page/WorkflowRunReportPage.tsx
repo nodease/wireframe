@@ -41,6 +41,34 @@ type PeriodUsage = {
   avgDuration: number;
 };
 
+type LlmQualityMetric = {
+  label: string;
+  value: string;
+  description: string;
+  tone?: 'default' | 'warning' | 'danger';
+};
+
+type QualityTrendPoint = {
+  label: string;
+  score: number;
+};
+
+type RagDocumentMetric = {
+  name: string;
+  references: number;
+  failures: number;
+  missingFields: number;
+  freshness: string;
+  warning?: string;
+};
+
+type RagMetric = {
+  label: string;
+  value: string;
+  description: string;
+  tone?: 'default' | 'warning';
+};
+
 type WorkflowRunHistoryEntry = {
   id: string;
   runId: string;
@@ -171,6 +199,17 @@ export function WorkflowRunReportPage({
   const failedLogs = displayLogs.filter(
     (log) => log.status === 'Failed' || log.status === 'Blocked',
   );
+  const hasRetriedRun = failedLogs.length > 0 || (selectedWorkflow?.errorCount ?? 0) > 0;
+  const llmLogs = displayLogs.filter(
+    (log) => log.typeLabel.includes('LLM') || log.typeLabel.includes('AI Agent'),
+  );
+  const ragLogs = displayLogs.filter(
+    (log) =>
+      log.typeLabel.includes('RAG') ||
+      log.typeLabel.includes('Notion') ||
+      log.typeLabel.includes('Knowledge') ||
+      log.name.includes('RAG'),
+  );
   const slowestLog = [...displayLogs].sort(
     (first, second) => second.duration - first.duration,
   )[0];
@@ -193,6 +232,115 @@ export function WorkflowRunReportPage({
       ),
     };
   });
+  const llmQualityMetrics: LlmQualityMetric[] = [
+    {
+      label: '응답 성공률',
+      value: `${Math.max(88, 100 - failedLogs.length * 7)}%`,
+      description: 'LLM/Agent 노드가 정상 응답을 반환한 비율',
+    },
+    {
+      label: '평균 응답 길이',
+      value: `${Math.max(420, Math.round(totalTokens / Math.max(1, llmLogs.length || 1) / 2)).toLocaleString('ko-KR')}자`,
+      description: '최근 실행 기준 응답 본문 평균 길이',
+    },
+    {
+      label: '빈 응답 비율',
+      value: failedLogs.length > 0 ? '2.1%' : '0%',
+      description: '내용이 없거나 후속 노드로 전달할 수 없는 응답',
+      tone: failedLogs.length > 0 ? 'warning' : 'default',
+    },
+    {
+      label: 'JSON/schema 파싱 실패율',
+      value: failedLogs.length > 0 ? '3.4%' : '0%',
+      description: '구조화 출력 파싱에 실패한 비율',
+      tone: failedLogs.length > 0 ? 'warning' : 'default',
+    },
+    {
+      label: 'hallucination 의심',
+      value: `${Math.min(3, failedLogs.length + (ragLogs.length === 0 ? 1 : 0))}건`,
+      description: 'RAG 근거 없이 단정한 답변으로 표시된 건수',
+      tone: ragLogs.length === 0 ? 'warning' : 'default',
+    },
+    {
+      label: '사용자 수정/재실행',
+      value: hasRetriedRun ? '1건' : '0건',
+      description: '사람이 결과를 수정하거나 다시 실행한 비율',
+    },
+    {
+      label: 'RAG 참조 사용률',
+      value: ragLogs.length > 0 ? '76%' : '0%',
+      description: 'LLM 응답이 검색 문서를 참조한 비율',
+      tone: ragLogs.length > 0 ? 'default' : 'warning',
+    },
+    {
+      label: 'RAG 검색 결과 없음',
+      value: ragLogs.length > 0 ? '5.8%' : '100%',
+      description: '검색 호출 중 유효 문서를 찾지 못한 비율',
+      tone: ragLogs.length > 0 ? 'default' : 'danger',
+    },
+    {
+      label: '가드레일 차단',
+      value: failedLogs.some((log) => log.typeLabel.includes('Guardrail')) ? '1건' : '0건',
+      description: '정책 또는 민감 정보 규칙으로 차단된 응답',
+    },
+  ];
+  const qualityTrend: QualityTrendPoint[] = [
+    { label: '6/17', score: 82 },
+    { label: '6/18', score: 85 },
+    { label: '6/19', score: 87 },
+    { label: '6/20', score: 86 },
+    { label: '6/21', score: 90 },
+    { label: '6/22', score: failedLogs.length > 0 ? 84 : 91 },
+    { label: '6/23', score: failedLogs.length > 0 ? 88 : 93 },
+  ];
+  const ragMetrics: RagMetric[] = [
+    {
+      label: '연결된 문서 수',
+      value: `${Math.max(1, ragLogs.length + 2)}개`,
+      description: '이 워크플로우가 참조하는 지식기반 문서',
+    },
+    {
+      label: '검색 호출 수',
+      value: `${Math.max(12, baseExecutions * Math.max(1, ragLogs.length)).toLocaleString('ko-KR')}회`,
+      description: '최근 30일 RAG 검색 호출',
+    },
+    {
+      label: '검색 결과 없음',
+      value: ragLogs.length > 0 ? '5.8%' : '100%',
+      description: 'top-k 결과가 비어 있던 호출 비율',
+      tone: ragLogs.length > 0 ? 'default' : 'warning',
+    },
+    {
+      label: '평균 top-k 점수',
+      value: ragLogs.length > 0 ? '0.82' : '0.00',
+      description: '상위 검색 결과의 평균 유사도 점수',
+      tone: ragLogs.length > 0 ? 'default' : 'warning',
+    },
+  ];
+  const ragDocuments: RagDocumentMetric[] = [
+    {
+      name: '프로젝트 회의록 및 결정사항',
+      references: 34,
+      failures: 0,
+      missingFields: 1,
+      freshness: '2일 전 업데이트',
+    },
+    {
+      name: '코드스타일 리뷰 가이드',
+      references: 21,
+      failures: 0,
+      missingFields: 0,
+      freshness: '5일 전 업데이트',
+    },
+    {
+      name: '월간 리포트 아카이브',
+      references: 9,
+      failures: 2,
+      missingFields: 3,
+      freshness: '118일 전 업데이트',
+      warning: '오래된 문서',
+    },
+  ];
   const runHistory: WorkflowRunHistoryEntry[] = useMemo(() => {
     const baseLogs = displayLogs.length > 0 ? displayLogs : syntheticLogs;
     const runTemplates = [
@@ -326,9 +474,11 @@ export function WorkflowRunReportPage({
         </div>
 
         <Tabs defaultValue="stats">
-          <TabsList className="mb-5">
+          <TabsList className="mb-5 flex-wrap">
             <TabsTrigger value="stats">통계</TabsTrigger>
             <TabsTrigger value="logs">로그</TabsTrigger>
+            <TabsTrigger value="llm-quality">LLM 품질</TabsTrigger>
+            <TabsTrigger value="rag">데이터/RAG</TabsTrigger>
             <TabsTrigger value="failures">실패큐</TabsTrigger>
           </TabsList>
 
@@ -514,6 +664,93 @@ export function WorkflowRunReportPage({
             </Card>
           </TabsContent>
 
+          <TabsContent value="llm-quality" className="grid gap-5">
+            <Card>
+              <CardHeader>
+                <h3 className="text-lg font-black text-slate-950">LLM 품질 지표</h3>
+                <p className="text-sm text-slate-500">
+                  LLM/Agent 노드의 응답 품질, 구조화 출력 안정성, RAG 근거 활용 여부를 확인합니다.
+                </p>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-3">
+                {llmQualityMetrics.map((metric) => (
+                  <QualityMetricCard key={metric.label} metric={metric} />
+                ))}
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+              <Card>
+                <CardHeader>
+                  <h3 className="text-lg font-black text-slate-950">품질 점수 추이</h3>
+                  <p className="text-sm text-slate-500">
+                    최근 실행 결과의 응답 완성도, 파싱 안정성, RAG 근거 사용률을 합산한 예시 점수입니다.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <QualityTrendChart points={qualityTrend} />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <h3 className="text-lg font-black text-slate-950">품질 리스크</h3>
+                  <p className="text-sm text-slate-500">
+                    운영 중 바로 확인해야 하는 LLM 품질 경고입니다.
+                  </p>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <RiskRow
+                    title="구조화 출력 실패"
+                    description="JSON/schema 파싱 실패가 발생하면 후속 노드 입력이 비어 있을 수 있습니다."
+                    status={failedLogs.length > 0 ? '점검 필요' : '정상'}
+                    warning={failedLogs.length > 0}
+                  />
+                  <RiskRow
+                    title="RAG 근거 부족"
+                    description="검색 결과 없음 비율이 높으면 답변 근거가 약해질 수 있습니다."
+                    status={ragLogs.length > 0 ? '관찰 중' : '점검 필요'}
+                    warning={ragLogs.length === 0}
+                  />
+                  <RiskRow
+                    title="사용자 재실행"
+                    description="재실행이 반복되면 프롬프트나 문서 연결을 조정해야 합니다."
+                    status={hasRetriedRun ? '관찰 중' : '정상'}
+                    warning={hasRetriedRun}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="rag" className="grid gap-5">
+            <Card>
+              <CardHeader>
+                <h3 className="text-lg font-black text-slate-950">데이터/RAG 운영 지표</h3>
+                <p className="text-sm text-slate-500">
+                  연결된 문서와 검색 호출 품질을 확인해 LLM 답변의 근거 상태를 점검합니다.
+                </p>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-4">
+                {ragMetrics.map((metric) => (
+                  <RagMetricCard key={metric.label} metric={metric} />
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 className="text-lg font-black text-slate-950">문서별 참조 및 실패 현황</h3>
+                <p className="text-sm text-slate-500">
+                  자주 참조되는 문서, 오래된 문서 경고, 문서별 실패/누락 건수를 표로 확인합니다.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <RagDocumentTable documents={ragDocuments} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="failures">
             <Card>
               <CardHeader>
@@ -640,6 +877,159 @@ function TokenUsageChart({ periods }: { periods: PeriodUsage[] }) {
       </div>
       <div className="text-center text-[11px] font-black text-slate-500">
         기간
+      </div>
+    </div>
+  );
+}
+
+function QualityMetricCard({ metric }: { metric: LlmQualityMetric }) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border bg-white p-4',
+        metric.tone === 'warning' && 'border-amber-200 bg-amber-50',
+        metric.tone === 'danger' && 'border-red-200 bg-red-50',
+        !metric.tone && 'border-slate-200',
+      )}
+    >
+      <span className="block text-xs font-black text-slate-500">{metric.label}</span>
+      <strong className="mt-2 block text-2xl font-black text-slate-950">
+        {metric.value}
+      </strong>
+      <small className="mt-2 block leading-5 text-slate-500">{metric.description}</small>
+    </div>
+  );
+}
+
+function QualityTrendChart({ points }: { points: QualityTrendPoint[] }) {
+  const maxScore = 100;
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-[48px_1fr] gap-3">
+        <div className="relative flex h-64 flex-col justify-between text-right text-[11px] font-semibold text-slate-400">
+          {[100, 75, 50].map((tick) => (
+            <span key={tick}>{tick}</span>
+          ))}
+          <span className="absolute -left-2 top-1/2 -rotate-90 text-[10px] font-black text-slate-500">
+            score
+          </span>
+        </div>
+        <div className="relative h-64 border-b border-l border-slate-300 pl-4">
+          <div className="absolute inset-x-4 top-0 border-t border-dashed border-slate-200" />
+          <div className="absolute inset-x-4 top-1/2 border-t border-dashed border-slate-200" />
+          <div className="flex h-full items-end justify-around gap-3">
+            {points.map((point) => (
+              <div key={point.label} className="flex h-full flex-1 flex-col justify-end">
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[11px] font-black text-slate-600">{point.score}</span>
+                  <div className="flex h-52 w-full items-end justify-center">
+                    <span
+                      className="block w-full max-w-12 rounded-t-md bg-blue-600"
+                      style={{ height: `${Math.max(8, (point.score / maxScore) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-[48px_1fr] gap-3">
+        <span />
+        <div className="flex justify-around gap-3 pl-4 text-center text-xs font-black text-slate-500">
+          {points.map((point) => (
+            <span key={point.label} className="flex-1">
+              {point.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RiskRow({
+  title,
+  description,
+  status,
+  warning = false,
+}: {
+  title: string;
+  description: string;
+  status: string;
+  warning?: boolean;
+}) {
+  return (
+    <article
+      className={cn(
+        'rounded-lg border p-4',
+        warning ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50',
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <strong className="text-sm font-black text-slate-950">{title}</strong>
+        <Badge variant={warning ? 'warning' : 'success'}>{status}</Badge>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
+    </article>
+  );
+}
+
+function RagMetricCard({ metric }: { metric: RagMetric }) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border bg-white p-4',
+        metric.tone === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-slate-200',
+      )}
+    >
+      <span className="block text-xs font-black text-slate-500">{metric.label}</span>
+      <strong className="mt-2 block text-2xl font-black text-slate-950">
+        {metric.value}
+      </strong>
+      <small className="mt-2 block leading-5 text-slate-500">{metric.description}</small>
+    </div>
+  );
+}
+
+function RagDocumentTable({ documents }: { documents: RagDocumentMetric[] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <div className="min-w-[920px]">
+        <div className="grid grid-cols-[1.5fr_100px_110px_110px_150px_110px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black text-slate-400">
+          <span>문서</span>
+          <span className="text-right">참조</span>
+          <span className="text-right">실패</span>
+          <span className="text-right">누락</span>
+          <span>최신성</span>
+          <span>경고</span>
+        </div>
+        {documents.map((document) => (
+          <div
+            key={document.name}
+            className="grid grid-cols-[1.5fr_100px_110px_110px_150px_110px] gap-3 border-b border-slate-100 px-4 py-3 text-sm last:border-b-0"
+          >
+            <strong className="truncate text-slate-950">{document.name}</strong>
+            <span className="text-right font-bold text-slate-600">
+              {document.references.toLocaleString('ko-KR')}회
+            </span>
+            <span className="text-right font-bold text-slate-600">
+              {document.failures.toLocaleString('ko-KR')}건
+            </span>
+            <span className="text-right font-bold text-slate-600">
+              {document.missingFields.toLocaleString('ko-KR')}건
+            </span>
+            <span className="font-bold text-slate-500">{document.freshness}</span>
+            <span>
+              {document.warning ? (
+                <Badge variant="warning">{document.warning}</Badge>
+              ) : (
+                <Badge variant="success">정상</Badge>
+              )}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
