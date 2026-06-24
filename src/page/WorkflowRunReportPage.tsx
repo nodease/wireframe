@@ -134,7 +134,7 @@ export function WorkflowRunReportPage({
     const runTemplates = [
       {
         id: 'latest',
-        startedAt: selectedWorkflow?.lastRun ?? '오늘 10:42',
+        startedAt: '2026-06-24 19:42:18',
         triggerLabel: '실행 버튼',
         executorLabel: '김민지',
         executionSource: '수동 실행' as const,
@@ -143,7 +143,7 @@ export function WorkflowRunReportPage({
       },
       {
         id: 'auto-1',
-        startedAt: '어제 09:00',
+        startedAt: '2026-06-24 09:00:00',
         triggerLabel: 'Time Trigger',
         executorLabel: '자동 실행',
         executionSource: '자동 실행' as const,
@@ -152,7 +152,7 @@ export function WorkflowRunReportPage({
       },
       {
         id: 'manual-2',
-        startedAt: '6월 22일 18:14',
+        startedAt: '2026-06-23 18:14:37',
         triggerLabel: '실행 버튼',
         executorLabel: '이혜연',
         executionSource: '수동 실행' as const,
@@ -161,7 +161,7 @@ export function WorkflowRunReportPage({
       },
       {
         id: 'auto-3',
-        startedAt: '6월 21일 09:00',
+        startedAt: '2026-06-23 09:00:00',
         triggerLabel: 'Time Trigger',
         executorLabel: '자동 실행',
         executionSource: '자동 실행' as const,
@@ -170,7 +170,7 @@ export function WorkflowRunReportPage({
       },
       {
         id: 'manual-4',
-        startedAt: '6월 20일 16:32',
+        startedAt: '2026-06-22 16:32:05',
         triggerLabel: 'Webhook Trigger',
         executorLabel: '박준',
         executionSource: '수동 실행' as const,
@@ -396,10 +396,23 @@ export function WorkflowRunReportPage({
                   자동 실행인지 수동 실행인지, 수동 실행이면 누가 실행했는지 확인합니다.
                 </p>
               </CardHeader>
-              <CardContent className="grid gap-3">
-                {runHistory.map((run) => (
-                  <RunHistoryCard key={run.id} run={run} />
-                ))}
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <div className="grid min-w-[850px] gap-3">
+                    <div className="grid grid-cols-[180px_84px_88px_120px_64px_74px_100px] gap-3 px-4 text-xs font-black text-slate-400">
+                      <span>실행 시각</span>
+                      <span>방식</span>
+                      <span>실행자</span>
+                      <span>트리거</span>
+                      <span>상태</span>
+                      <span className="text-right">시간</span>
+                      <span className="text-right">토큰</span>
+                    </div>
+                    {runHistory.map((run) => (
+                      <RunHistoryCard key={run.id} run={run} />
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -555,38 +568,29 @@ function RunHistoryCard({ run }: { run: WorkflowRunHistoryEntry }) {
   return (
     <details
       className={cn(
-        'group rounded-lg border bg-slate-50 p-4',
+        'group rounded-lg border bg-white',
         isFailed ? 'border-red-200 bg-red-50' : 'border-slate-200',
       )}
     >
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <strong className="text-sm font-black text-slate-950">
-              {run.startedAt}
-            </strong>
-            <Badge variant={run.executionSource === '자동 실행' ? 'secondary' : 'default'}>
-              {run.executionSource}
-            </Badge>
-            <Badge variant={isFailed ? 'warning' : 'success'}>{run.status}</Badge>
-          </div>
-          <span className="mt-2 block text-sm text-slate-500">
-            실행자 {run.executorLabel} · 트리거 {run.triggerLabel}
-          </span>
-          <small className="mt-1 block text-xs text-slate-400">
-            실행 시간 {formatDuration(run.duration)} · 토큰{' '}
-            {run.tokens.toLocaleString('ko-KR')}개 · 노드 {run.nodeLogs.length}개
-          </small>
-        </div>
-        <span className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-600 group-open:hidden">
-          상세보기
+      <summary className="grid cursor-pointer list-none grid-cols-[180px_84px_88px_120px_64px_74px_100px] items-center gap-3 px-4 py-3 text-sm transition hover:bg-slate-50">
+        <span className="font-black text-slate-950">{run.startedAt}</span>
+        <span className="text-xs font-bold text-slate-600">{run.executionSource}</span>
+        <span className="truncate text-xs font-bold text-slate-600">
+          {run.executorLabel}
         </span>
-        <span className="hidden shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-600 group-open:inline">
-          접기
+        <span className="truncate text-xs font-bold text-slate-500">
+          {run.triggerLabel}
+        </span>
+        <Badge variant={isFailed ? 'warning' : 'success'}>{run.status}</Badge>
+        <span className="text-right text-xs font-black text-slate-600">
+          {formatDuration(run.duration)}
+        </span>
+        <span className="text-right text-xs font-black text-slate-600">
+          {run.tokens.toLocaleString('ko-KR')} tokens
         </span>
       </summary>
 
-      <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4">
+      <div className="grid gap-3 border-t border-slate-200 p-4">
         <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600 md:grid-cols-2">
           <RunMeta label="실행 방식" value={run.executionSource} />
           <RunMeta label="실행자" value={run.executorLabel} />
