@@ -273,6 +273,7 @@ export default function HomePage({
 
     if (view === 'runReport') {
       setReportReturnView(activeView);
+      setSelectedAnalyticsWorkflowId(null);
     }
 
     setActiveView(view);
@@ -285,7 +286,7 @@ export default function HomePage({
   const openWorkflowAnalytics = (workflowId: number) => {
     setSelectedAnalyticsWorkflowId(workflowId);
     setCurrentWorkflowId(workflowId);
-    setReportReturnView(activeView);
+    setReportReturnView(activeView === 'runReport' ? 'runReport' : activeView);
     setActiveView('runReport');
 
     if (typeof window !== 'undefined') {
@@ -457,46 +458,48 @@ export default function HomePage({
     }
 
     if (activeView === 'runReport') {
-      if (workflowFromUrl) {
+      const hasWorkflowReportRequest = searchParams.has('workflowId');
+
+      if (!hasWorkflowReportRequest) {
+        setSelectedAnalyticsWorkflowId(null);
+      } else if (workflowFromUrl) {
         setSelectedAnalyticsWorkflowId(workflowFromUrl.id);
         setCurrentWorkflowId(workflowFromUrl.id);
         setCreatedWorkflowName(workflowFromUrl.name);
         setCreatedWorkflowDescription(workflowFromUrl.description ?? '');
-      }
 
-      const storedRunReport = window.localStorage.getItem(runReportStorageKey);
+        const storedRunReport = window.localStorage.getItem(runReportStorageKey);
 
-      if (storedRunReport) {
-        const parsedRunReport = JSON.parse(storedRunReport) as {
-          workflowId: number | null;
-          workflowName: string;
-          executionLogs: ExecutionLog[];
-        };
-        const reportWorkflow = parsedWorkflows.find(
-          (workflow) => workflow.id === parsedRunReport.workflowId,
+        if (storedRunReport) {
+          const parsedRunReport = JSON.parse(storedRunReport) as {
+            workflowId: number | null;
+            workflowName: string;
+            executionLogs: ExecutionLog[];
+          };
+          const reportWorkflow = parsedWorkflows.find(
+            (workflow) => workflow.id === parsedRunReport.workflowId,
+          );
+
+          if (workflowFromUrl.id === parsedRunReport.workflowId) {
+            setExecutionLogs(parsedRunReport.executionLogs);
+            setCurrentWorkflowId(parsedRunReport.workflowId);
+            setSelectedAnalyticsWorkflowId(parsedRunReport.workflowId);
+            setCreatedWorkflowName(reportWorkflow?.name ?? parsedRunReport.workflowName);
+            setCreatedWorkflowDescription(reportWorkflow?.description ?? '');
+          }
+        }
+
+        setCanvasNodes(workflowFromUrl.nodes.map(hydrateNode));
+        setCanvasEdges(workflowFromUrl.edges);
+        setIsWorkflowActive(workflowFromUrl.isActive !== false);
+        setIsWorkflowTeamShared(
+          Boolean(workflowFromUrl.isTeamShared && isUserTeamId(workflowFromUrl.teamId)),
         );
-
-        if (!workflowFromUrl || workflowFromUrl.id === parsedRunReport.workflowId) {
-          setExecutionLogs(parsedRunReport.executionLogs);
-          setCurrentWorkflowId(parsedRunReport.workflowId);
-          setSelectedAnalyticsWorkflowId(parsedRunReport.workflowId);
-          setCreatedWorkflowName(reportWorkflow?.name ?? parsedRunReport.workflowName);
-          setCreatedWorkflowDescription(reportWorkflow?.description ?? '');
-        }
-
-        if (!workflowFromUrl && reportWorkflow) {
-          setCanvasNodes(reportWorkflow.nodes.map(hydrateNode));
-          setCanvasEdges(reportWorkflow.edges);
-          setIsWorkflowActive(reportWorkflow.isActive !== false);
-          setIsWorkflowTeamShared(
-            Boolean(reportWorkflow.isTeamShared && isUserTeamId(reportWorkflow.teamId)),
-          );
-          setSelectedWorkflowTeamId(
-            isUserTeamId(reportWorkflow.teamId)
-              ? reportWorkflow.teamId ?? null
-              : defaultWorkflowTeamId,
-          );
-        }
+        setSelectedWorkflowTeamId(
+          isUserTeamId(workflowFromUrl.teamId)
+            ? workflowFromUrl.teamId ?? null
+            : defaultWorkflowTeamId,
+        );
       }
     }
 
@@ -1890,10 +1893,10 @@ export default function HomePage({
     const closeReport = () => {
       const fallbackView =
         reportReturnView === 'runReport'
-          ? 'home'
+          ? 'runReport'
           : reportReturnView;
 
-      if (fallbackView === 'analytics') {
+      if (fallbackView === 'analytics' || fallbackView === 'runReport') {
         setSelectedAnalyticsWorkflowId(null);
       }
 
@@ -1930,10 +1933,7 @@ export default function HomePage({
     );
   };
 
-  const hasStandaloneReportTarget =
-    selectedAnalyticsWorkflowId !== null ||
-    currentWorkflowId !== null ||
-    executionLogs.length > 0;
+  const hasStandaloneReportTarget = selectedAnalyticsWorkflowId !== null;
 
   if (activeView === 'runReport' && hasStandaloneReportTarget) {
     return renderRunReportPage();
