@@ -1,6 +1,16 @@
 'use client';
 
-import { ArrowLeft, BarChart3, Play, Save, Settings2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  Play,
+  Save,
+  Settings2,
+  X,
+} from 'lucide-react';
 import { useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   ChatWidget,
@@ -25,6 +35,7 @@ import type {
   CanvasEdge,
   CanvasNode,
   ExecutionLog,
+  FailureQueueItem,
 } from '../domains/workflow/types';
 import type { UserTeam } from '../domains/account/types';
 
@@ -40,6 +51,9 @@ type WorkflowBuilderPageProps = {
   runNotice: string;
   runningNodeIds: number[];
   nodeRunStatuses: Record<number, 'running' | 'success' | 'failed'>;
+  executionLogs: ExecutionLog[];
+  failureQueue: FailureQueueItem[];
+  isRunLogOpen: boolean;
   isChatOpen: boolean;
   chatPosition: { x: number; bottom: number };
   chatSize: { width: number; height: number };
@@ -53,6 +67,7 @@ type WorkflowBuilderPageProps = {
   onSave: () => void;
   onRun: () => void;
   onOpenAnalytics: () => void;
+  onCloseRunLog: () => void;
   onWorkflowNameChange: (name: string) => void;
   onWorkflowDescriptionChange: (description: string) => void;
   onWorkflowActiveChange: (isActive: boolean) => void;
@@ -112,6 +127,9 @@ export function WorkflowBuilderPage({
   runNotice,
   runningNodeIds,
   nodeRunStatuses,
+  executionLogs,
+  failureQueue,
+  isRunLogOpen,
   isChatOpen,
   chatPosition,
   chatSize,
@@ -125,6 +143,7 @@ export function WorkflowBuilderPage({
   onSave,
   onRun,
   onOpenAnalytics,
+  onCloseRunLog,
   onWorkflowNameChange,
   onWorkflowDescriptionChange,
   onWorkflowActiveChange,
@@ -234,6 +253,12 @@ export function WorkflowBuilderPage({
           onUpdateNodeConfig={onUpdateNodeConfig}
           onExecuteNotionPrompt={onExecuteNotionPrompt}
           getNodeRunProfile={getNodeRunProfile}
+        />
+        <RunLogSidebar
+          isOpen={isRunLogOpen}
+          executionLogs={executionLogs}
+          failureQueue={failureQueue}
+          onClose={onCloseRunLog}
         />
       </section>
 
@@ -393,6 +418,157 @@ export function WorkflowBuilderPage({
 
       {workflowModal}
     </main>
+  );
+}
+
+function RunLogSidebar({
+  isOpen,
+  executionLogs,
+  failureQueue,
+  onClose,
+}: {
+  isOpen: boolean;
+  executionLogs: ExecutionLog[];
+  failureQueue: FailureQueueItem[];
+  onClose: () => void;
+}) {
+  const activeFailures = failureQueue.filter((item) => item.status !== 'resolved');
+  const successCount = executionLogs.filter((log) => log.status === 'Success').length;
+  const failedCount = executionLogs.filter((log) => log.status === 'Failed').length;
+  const totalDuration = executionLogs.reduce((total, log) => total + log.duration, 0);
+  const totalCredits = executionLogs.reduce((total, log) => total + log.credits, 0);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <aside className="flex w-[380px] shrink-0 flex-col border-l border-slate-200 bg-white">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4">
+        <div>
+          <h2 className="text-base font-black text-slate-950">실행 로그</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            방금 실행한 노드별 결과를 확인합니다.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onClose}
+          aria-label="실행 로그 닫기"
+        >
+          <X size={16} />
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 border-b border-slate-200 p-4">
+        <RunLogMetric label="성공" value={`${successCount}개`} />
+        <RunLogMetric label="실패" value={`${failedCount}개`} tone={failedCount > 0 ? 'warning' : 'default'} />
+        <RunLogMetric label="실행 시간" value={`${totalDuration.toFixed(1)}s`} />
+        <RunLogMetric label="크레딧" value={String(totalCredits)} />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {executionLogs.length === 0 ? (
+          <div className="grid min-h-40 place-items-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center">
+            <div>
+              <Clock className="mx-auto h-5 w-5 text-slate-400" />
+              <strong className="mt-3 block text-sm font-black text-slate-800">
+                아직 실행 로그가 없습니다
+              </strong>
+              <span className="mt-1 block text-sm text-slate-500">
+                실행 버튼을 누르면 여기에 표시됩니다.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {executionLogs.map((log, index) => {
+              const isFailed = log.status === 'Failed';
+
+              return (
+                <article
+                  key={`${log.nodeId}-${index}`}
+                  className={cn(
+                    'rounded-lg border bg-slate-50 p-3',
+                    isFailed ? 'border-red-200 bg-red-50' : 'border-slate-200',
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={cn(
+                        'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+                        isFailed
+                          ? 'bg-red-100 text-red-600'
+                          : 'bg-emerald-100 text-emerald-600',
+                      )}
+                    >
+                      {isFailed ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <strong className="block truncate text-sm font-black text-slate-950">
+                        {log.name}
+                      </strong>
+                      <span className="mt-1 block text-xs font-semibold text-slate-500">
+                        {log.typeLabel} · {log.duration.toFixed(1)}s · 크레딧 {log.credits}
+                      </span>
+                      {log.message && (
+                        <p className="mt-2 text-xs leading-5 text-red-600">{log.message}</p>
+                      )}
+                    </div>
+                    <Badge variant={isFailed ? 'warning' : 'success'}>
+                      {isFailed ? '실패' : '완료'}
+                    </Badge>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {activeFailures.length > 0 && (
+        <div className="border-t border-slate-200 bg-red-50 p-4">
+          <strong className="text-sm font-black text-red-700">
+            실패 큐 {activeFailures.length}건
+          </strong>
+          <p className="mt-1 text-xs leading-5 text-red-600">
+            실패한 실행은 큐에 보관되고 설정된 수신처로 주기적으로 알림이 전송됩니다.
+          </p>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function RunLogMetric({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: string;
+  tone?: 'default' | 'warning';
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border border-slate-200 bg-slate-50 p-3',
+        tone === 'warning' && 'border-red-200 bg-red-50',
+      )}
+    >
+      <span className="block text-xs font-black text-slate-500">{label}</span>
+      <strong
+        className={cn(
+          'mt-1 block text-lg font-black text-slate-950',
+          tone === 'warning' && 'text-red-700',
+        )}
+      >
+        {value}
+      </strong>
+    </div>
   );
 }
 

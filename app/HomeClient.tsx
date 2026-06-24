@@ -171,6 +171,7 @@ export default function HomePage({
   const [chatSize, setChatSize] = useState({ width: 360, height: 800 });
   const [runNotice, setRunNotice] = useState('');
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [isRunLogOpen, setIsRunLogOpen] = useState(false);
   const [runningNodeIds, setRunningNodeIds] = useState<number[]>([]);
   const [nodeRunStatuses, setNodeRunStatuses] = useState<
     Record<number, 'running' | 'success' | 'failed'>
@@ -744,6 +745,8 @@ export default function HomePage({
       return;
     }
 
+    setIsRunLogOpen(false);
+
     const triggerNode = canvasNodes.find(
       (node) =>
         node.typeLabel === 'Time Trigger' ||
@@ -782,7 +785,7 @@ export default function HomePage({
       setExecutionLogs(logs);
       persistRunReport(logs);
       setRunNotice('실패 실행을 큐에 등록했습니다');
-      openWorkflowRunReport();
+      setIsRunLogOpen(true);
       window.setTimeout(() => setRunNotice(''), 2200);
       return;
     }
@@ -824,7 +827,7 @@ export default function HomePage({
 
       setExecutionLogs(logs);
       persistRunReport(logs);
-      playNodeRunAnimation(logStages, openWorkflowRunReport);
+      playNodeRunAnimation(logStages, () => setIsRunLogOpen(true));
       setRunNotice('실패 실행을 큐에 등록했습니다');
       window.setTimeout(() => setRunNotice(''), 2200);
       return;
@@ -849,7 +852,7 @@ export default function HomePage({
 
     setExecutionLogs(logs);
     persistRunReport(logs);
-    playNodeRunAnimation(logStages, openWorkflowRunReport);
+    playNodeRunAnimation(logStages, () => setIsRunLogOpen(true));
     setRunNotice('');
   };
 
@@ -936,23 +939,6 @@ export default function HomePage({
         createdAt: Date.now(),
       }),
     );
-  };
-
-  const openWorkflowRunReport = () => {
-    setSelectedAnalyticsWorkflowId(currentWorkflowId);
-    setReportReturnView('workflowBuilder');
-    setActiveView('runReport');
-
-    if (typeof window !== 'undefined') {
-      const workflowQuery =
-        currentWorkflowId === null ? '' : `?workflowId=${currentWorkflowId}`;
-
-      window.history.pushState(
-        { view: 'runReport', workflowId: currentWorkflowId },
-        '',
-        `${viewPathMap.runReport}${workflowQuery}`,
-      );
-    }
   };
 
   const openAuthView = (view: 'login' | 'signup') => {
@@ -1836,6 +1822,9 @@ export default function HomePage({
         runNotice={runNotice}
         runningNodeIds={runningNodeIds}
         nodeRunStatuses={nodeRunStatuses}
+        executionLogs={executionLogs}
+        failureQueue={failureQueue}
+        isRunLogOpen={isRunLogOpen}
         isChatOpen={isChatOpen}
         chatPosition={chatPosition}
         chatSize={chatSize}
@@ -1853,6 +1842,7 @@ export default function HomePage({
             openWorkflowAnalytics(currentWorkflowId);
           }
         }}
+        onCloseRunLog={() => setIsRunLogOpen(false)}
         onWorkflowNameChange={setCreatedWorkflowName}
         onWorkflowDescriptionChange={setCreatedWorkflowDescription}
         onWorkflowActiveChange={handleWorkflowActiveChange}
