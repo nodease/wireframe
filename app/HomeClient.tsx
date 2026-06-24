@@ -57,6 +57,7 @@ import type {
 } from '../src/domains/workflow/types';
 import {
   createFailureDemoWorkflowRecord,
+  createDemoExecutionLogsForWorkflow,
   createGithubPrReviewWorkflowRecord,
   createInactiveDemoWorkflowRecord,
   createNotionFailureDemoWorkflowRecord,
@@ -285,8 +286,11 @@ export default function HomePage({
   };
 
   const openWorkflowAnalytics = (workflowId: number) => {
+    const workflowForReport = workflows.find((workflow) => workflow.id === workflowId) ?? null;
+
     setSelectedAnalyticsWorkflowId(workflowId);
     setCurrentWorkflowId(workflowId);
+    setExecutionLogs(createDemoExecutionLogsForWorkflow(workflowForReport));
     setReportReturnView(activeView === 'runReport' ? 'runReport' : activeView);
     setActiveView('runReport');
 
@@ -470,6 +474,7 @@ export default function HomePage({
         setCreatedWorkflowDescription(workflowFromUrl.description ?? '');
 
         const storedRunReport = window.localStorage.getItem(runReportStorageKey);
+        let didLoadStoredRunReport = false;
 
         if (storedRunReport) {
           const parsedRunReport = JSON.parse(storedRunReport) as {
@@ -487,7 +492,12 @@ export default function HomePage({
             setSelectedAnalyticsWorkflowId(parsedRunReport.workflowId);
             setCreatedWorkflowName(reportWorkflow?.name ?? parsedRunReport.workflowName);
             setCreatedWorkflowDescription(reportWorkflow?.description ?? '');
+            didLoadStoredRunReport = true;
           }
+        }
+
+        if (!didLoadStoredRunReport) {
+          setExecutionLogs(createDemoExecutionLogsForWorkflow(workflowFromUrl));
         }
 
         setCanvasNodes(workflowFromUrl.nodes.map(hydrateNode));

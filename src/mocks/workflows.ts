@@ -1,4 +1,8 @@
-import type { FailureQueueItem, WorkflowRecord } from '@/src/domains/workflow/types';
+import type {
+  ExecutionLog,
+  FailureQueueItem,
+  WorkflowRecord,
+} from '@/src/domains/workflow/types';
 
 export const workflowStorageKey = 'nodease.workflows.v1';
 export const runReportStorageKey = 'nodease.lastRunReport.v1';
@@ -6,6 +10,88 @@ export const runReportStorageKey = 'nodease.lastRunReport.v1';
 // 시연 기본 상태에서는 실패 큐를 비워둡니다.
 // 실패 시연이 필요하면 이 배열에 FailureQueueItem을 추가하면 됩니다.
 export const demoFailureQueue: FailureQueueItem[] = [];
+
+const getDemoNodeRunProfile = (
+  node: WorkflowRecord['nodes'][number],
+  index: number,
+  workflow: WorkflowRecord,
+): Pick<ExecutionLog, 'status' | 'duration' | 'credits' | 'message'> => {
+  const isFailureDemo =
+    workflow.name.includes('미확인 메일') ||
+    workflow.name.includes('일정 정리');
+  const shouldFail =
+    isFailureDemo &&
+    (node.typeLabel.includes('Slack') ||
+      node.typeLabel.includes('Notion') ||
+      node.label.includes('Slack') ||
+      node.label.includes('Notion'));
+  const durationByType =
+    node.typeLabel.includes('AI Agent')
+      ? 2.6
+      : node.typeLabel.includes('LLM')
+        ? 2.1
+        : node.typeLabel.includes('GitHub')
+          ? 1.4
+          : node.typeLabel.includes('Slack') || node.typeLabel.includes('Notion')
+            ? 1.2
+            : 0.6;
+  const creditsByType =
+    node.typeLabel.includes('AI Agent')
+      ? 3
+      : node.typeLabel.includes('LLM')
+        ? 2
+        : node.typeLabel.includes('GitHub') ||
+            node.typeLabel.includes('Slack') ||
+            node.typeLabel.includes('Notion')
+          ? 1
+          : 0;
+
+  if (!workflow.isActive) {
+    return {
+      status: 'Blocked',
+      duration: 0,
+      credits: 0,
+      message: '워크플로우가 비활성화되어 실행되지 않았습니다.',
+    };
+  }
+
+  if (shouldFail) {
+    return {
+      status: 'Failed',
+      duration: Number((durationByType + index * 0.18).toFixed(2)),
+      credits: Math.max(1, creditsByType),
+      message: node.typeLabel.includes('Slack')
+        ? 'Slack sender 권한이 만료되어 메시지를 전송하지 못했습니다.'
+        : 'Notion 데이터베이스 ID가 비어 있어 조회를 완료하지 못했습니다.',
+    };
+  }
+
+  return {
+    status: 'Success',
+    duration: Number((durationByType + index * 0.24).toFixed(2)),
+    credits: creditsByType,
+  };
+};
+
+export const createDemoExecutionLogsForWorkflow = (
+  workflow: WorkflowRecord | null | undefined,
+): ExecutionLog[] => {
+  if (!workflow) {
+    return [];
+  }
+
+  return workflow.nodes.map((node, index) => {
+    const profile = getDemoNodeRunProfile(node, index, workflow);
+
+    return {
+      nodeId: node.id,
+      name: node.label,
+      typeLabel: node.typeLabel,
+      description: node.description,
+      ...profile,
+    };
+  });
+};
 
 export const createFailureDemoWorkflowRecord = (
   workflowId = 2026062303,
