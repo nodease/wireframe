@@ -486,6 +486,10 @@ function RunLogSidebar({
               const isFailed = log.status === 'Failed';
               const logKey = `${log.nodeId}-${index}`;
               const isExpanded = expandedLogKey === logKey;
+              const durationPercent = Math.max(
+                4,
+                (log.duration / Math.max(totalDuration, 0.01)) * 100,
+              );
 
               return (
                 <article
@@ -535,6 +539,21 @@ function RunLogSidebar({
                       {isExpanded ? '접기' : '상세보기'}
                     </Button>
                   </div>
+                  <div className="mt-3">
+                    <div className="mb-1 flex items-center justify-between gap-3 text-[11px] font-semibold text-slate-500">
+                      <span>실행 시간 비중</span>
+                      <span>{durationPercent.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                      <span
+                        className={cn(
+                          'block h-full rounded-full',
+                          isFailed ? 'bg-red-500' : 'bg-slate-950',
+                        )}
+                        style={{ width: `${durationPercent}%` }}
+                      />
+                    </div>
+                  </div>
                   {isExpanded && (
                     <div className="mt-3 grid gap-2 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
                       <RunLogDetailRow label="노드 ID" value={String(log.nodeId)} />
@@ -564,9 +583,6 @@ function RunLogSidebar({
         </div>
       )}
 
-      {executionLogs.length > 0 && (
-        <RunDurationShareBar executionLogs={executionLogs} totalDuration={totalDuration} />
-      )}
     </aside>
   );
 }
@@ -576,51 +592,6 @@ function RunLogDetailRow({ label, value }: { label: string; value: string }) {
     <div className="grid grid-cols-[84px_1fr] gap-3">
       <span className="font-black text-slate-500">{label}</span>
       <span className="min-w-0 break-words text-slate-700">{value}</span>
-    </div>
-  );
-}
-
-function RunDurationShareBar({
-  executionLogs,
-  totalDuration,
-}: {
-  executionLogs: ExecutionLog[];
-  totalDuration: number;
-}) {
-  const denominator = Math.max(totalDuration, 0.01);
-
-  return (
-    <div className="border-t border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <strong className="text-xs font-black text-slate-700">실행 시간 비중</strong>
-        <span className="text-xs font-semibold text-slate-500">
-          총 {totalDuration.toFixed(1)}s
-        </span>
-      </div>
-      <div className="flex h-2 overflow-hidden rounded-full bg-slate-100">
-        {executionLogs.map((log, index) => {
-          const width = Math.max(3, (log.duration / denominator) * 100);
-          const isFailed = log.status === 'Failed';
-
-          return (
-            <span
-              key={`${log.nodeId}-${index}`}
-              className={cn(
-                'h-full',
-                isFailed
-                  ? 'bg-red-500'
-                  : index % 3 === 0
-                    ? 'bg-slate-950'
-                    : index % 3 === 1
-                      ? 'bg-slate-600'
-                      : 'bg-slate-400',
-              )}
-              style={{ width: `${width}%` }}
-              title={`${log.name}: ${log.duration.toFixed(1)}s`}
-            />
-          );
-        })}
-      </div>
     </div>
   );
 }
