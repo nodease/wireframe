@@ -41,6 +41,18 @@ type PeriodUsage = {
   avgDuration: number;
 };
 
+type WorkflowRunHistoryEntry = {
+  id: string;
+  startedAt: string;
+  triggerLabel: string;
+  executorLabel: string;
+  executionSource: '자동 실행' | '수동 실행';
+  status: '성공' | '실패';
+  duration: number;
+  tokens: number;
+  nodeLogs: ExecutionLog[];
+};
+
 const estimateTokenUsage = (credits: number) => Math.max(0, Math.round(credits * 1250));
 
 export function WorkflowRunReportPage({
@@ -100,9 +112,6 @@ export function WorkflowRunReportPage({
   )[0];
   const latestStatus =
     displayLogs.length === 0 ? '대기' : failedLogs.length > 0 ? '실패' : '성공';
-  const nodeCount = selectedWorkflow?.nodeCount ?? workflow?.nodes.length ?? displayLogs.length;
-  const edgeCount =
-    selectedWorkflow?.edgeCount ?? workflow?.edges.length ?? Math.max(0, displayLogs.length - 1);
   const baseExecutions = selectedWorkflow?.executions ?? Math.max(1, summary.executions);
   const baseTokens = selectedWorkflow
     ? estimateTokenUsage(selectedWorkflow.credits)
@@ -120,6 +129,87 @@ export function WorkflowRunReportPage({
       ),
     };
   });
+  const runHistory: WorkflowRunHistoryEntry[] = useMemo(() => {
+    const baseLogs = displayLogs.length > 0 ? displayLogs : syntheticLogs;
+    const runTemplates = [
+      {
+        id: 'latest',
+        startedAt: selectedWorkflow?.lastRun ?? '오늘 10:42',
+        triggerLabel: '실행 버튼',
+        executorLabel: '김민지',
+        executionSource: '수동 실행' as const,
+        durationMultiplier: 1,
+        tokenMultiplier: 1,
+      },
+      {
+        id: 'auto-1',
+        startedAt: '어제 09:00',
+        triggerLabel: 'Time Trigger',
+        executorLabel: '자동 실행',
+        executionSource: '자동 실행' as const,
+        durationMultiplier: 0.92,
+        tokenMultiplier: 0.88,
+      },
+      {
+        id: 'manual-2',
+        startedAt: '6월 22일 18:14',
+        triggerLabel: '실행 버튼',
+        executorLabel: '이혜연',
+        executionSource: '수동 실행' as const,
+        durationMultiplier: 1.18,
+        tokenMultiplier: 1.12,
+      },
+      {
+        id: 'auto-3',
+        startedAt: '6월 21일 09:00',
+        triggerLabel: 'Time Trigger',
+        executorLabel: '자동 실행',
+        executionSource: '자동 실행' as const,
+        durationMultiplier: 0.86,
+        tokenMultiplier: 0.8,
+      },
+      {
+        id: 'manual-4',
+        startedAt: '6월 20일 16:32',
+        triggerLabel: 'Webhook Trigger',
+        executorLabel: '박준',
+        executionSource: '수동 실행' as const,
+        durationMultiplier: 1.05,
+        tokenMultiplier: 1.02,
+      },
+    ];
+
+    return runTemplates.map((template, runIndex) => {
+      const nodeLogs = baseLogs.map((log, logIndex) => {
+        const isSyntheticFailure =
+          runIndex === 2 && logIndex === baseLogs.length - 1 && failedLogs.length > 0;
+
+        return {
+          ...log,
+          status: isSyntheticFailure ? 'Failed' : log.status,
+          duration: Number((log.duration * template.durationMultiplier).toFixed(2)),
+          credits: Math.max(1, Math.round(log.credits * template.tokenMultiplier)),
+          message: isSyntheticFailure
+            ? log.message ?? '이전 실행에서 외부 도구 응답 지연이 발생했습니다.'
+            : log.message,
+        };
+      });
+      const hasFailure = nodeLogs.some((log) => log.status !== 'Success');
+      const runCredits = nodeLogs.reduce((total, log) => total + log.credits, 0);
+
+      return {
+        id: template.id,
+        startedAt: template.startedAt,
+        triggerLabel: template.triggerLabel,
+        executorLabel: template.executorLabel,
+        executionSource: template.executionSource,
+        status: hasFailure ? '실패' : '성공',
+        duration: nodeLogs.reduce((total, log) => total + log.duration, 0),
+        tokens: estimateTokenUsage(runCredits),
+        nodeLogs,
+      };
+    });
+  }, [displayLogs, failedLogs.length, selectedWorkflow?.lastRun, syntheticLogs]);
   const chartRows = selectedWorkflow
     ? displayLogs.map((log) => ({
         id: log.nodeId,
@@ -134,35 +224,6 @@ export function WorkflowRunReportPage({
         displayValue: `${item.avgDuration}s`,
       }));
   const maxChartValue = Math.max(1, ...chartRows.map((row) => row.value));
-  const reportItems: Array<{ title: string; description: string; badge?: string }> = [
-    {
-      title: `${visibleWorkflowName || '워크플로우'} 실행 ${
-        displayLogs.length === 0 ? '대기' : failedLogs.length > 0 ? '실패' : '완료'
-      }`,
-      description: `노드 ${nodeCount}개 · 연결 ${edgeCount}개 · ${formatDuration(totalDuration)}`,
-      badge: `6월 23일 · ${latestStatus}`,
-    },
-    {
-      title: '최신 실행 요약',
-      description: `토큰 ${totalTokens.toLocaleString('ko-KR')}개 · 오류 ${failedLogs.length}건`,
-      badge: selectedWorkflow?.lastRun ?? '최근 실행',
-    },
-    {
-      title: '운영 지표',
-      description:
-        queuedFailures.length > 0
-          ? `실패 큐 ${queuedFailures.length}건 대기`
-          : '단순 자동화 반복 실행 효율 높음',
-      badge: '최근 7일 · 기록',
-    },
-    ['실행 품질', '실패 횟수, 재시도 횟수, 마지막 실패 원인'],
-    ['성능', `평균 실행 시간, 가장 느린 노드${slowestLog ? `: ${slowestLog.name}` : ''}, 대기 시간`],
-    ['비용', `토큰 사용량 ${totalTokens.toLocaleString('ko-KR')}개, 실행당 평균 비용, LLM 호출 비용 비중`],
-    ['생산성', `예상 절감 시간 ${Math.max(4, Math.round(nodeCount * 3))}분, 자동 처리 건수, 수작업 대체율`],
-    ['구조', `노드 수 ${nodeCount}, 엣지 수 ${edgeCount}, 분기 수, 외부 MCP 의존도`],
-    ['데이터 품질', '누락 필드, 빈 검색 결과, 가드레일 차단 건수'],
-  ].map((item) => (Array.isArray(item) ? { title: item[0], description: item[1] } : item));
-
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <section className="mx-auto max-w-7xl">
@@ -330,43 +391,28 @@ export function WorkflowRunReportPage({
           <TabsContent value="logs" className="grid gap-5">
             <Card>
               <CardHeader>
-                <h3 className="text-lg font-black text-slate-950">개별 실행 로그</h3>
+                <h3 className="text-lg font-black text-slate-950">워크플로우 실행 이력</h3>
                 <p className="text-sm text-slate-500">
-                  {visibleWorkflowName || '워크플로우'} 최근 실행 로그입니다.
+                  자동 실행인지 수동 실행인지, 수동 실행이면 누가 실행했는지 확인합니다.
                 </p>
               </CardHeader>
               <CardContent className="grid gap-3">
-                {reportItems.map((item) => (
-                  <article key={item.title} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <strong className="block text-sm font-black text-slate-950">{item.title}</strong>
-                      <span className="mt-1 block text-sm text-slate-500">{item.description}</span>
-                    </div>
-                    {item.badge && <Badge variant="secondary">{item.badge}</Badge>}
-                  </article>
+                {runHistory.map((run) => (
+                  <RunHistoryCard key={run.id} run={run} />
                 ))}
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <h3 className="text-lg font-black text-slate-950">노드 실행 상세</h3>
-                <p className="text-sm text-slate-500">실행 순서와 노드별 상태입니다.</p>
+                <h3 className="text-lg font-black text-slate-950">최신 실행 노드 상세</h3>
+                <p className="text-sm text-slate-500">
+                  가장 최근 실행의 노드별 처리 순서와 상태입니다.
+                </p>
               </CardHeader>
               <CardContent className="grid gap-3">
-                {displayLogs.map((log) => (
-                  <article key={`${log.nodeId}-${log.name}-detail`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <strong className="block text-sm font-black text-slate-950">{log.name}</strong>
-                      <span className="mt-1 block text-sm text-slate-500">
-                        {log.typeLabel} · {log.description}
-                      </span>
-                      {log.message && <small className="mt-1 block text-xs text-slate-400">{log.message}</small>}
-                    </div>
-                    <Badge variant={log.status === 'Success' ? 'success' : 'warning'}>
-                      {log.status === 'Success' ? '성공' : '실패'}
-                    </Badge>
-                  </article>
+                {(runHistory[0]?.nodeLogs ?? displayLogs).map((log) => (
+                  <NodeLogRow key={`${log.nodeId}-${log.name}-latest`} log={log} />
                 ))}
               </CardContent>
             </Card>
@@ -500,6 +546,101 @@ function TokenUsageChart({ periods }: { periods: PeriodUsage[] }) {
         기간
       </div>
     </div>
+  );
+}
+
+function RunHistoryCard({ run }: { run: WorkflowRunHistoryEntry }) {
+  const isFailed = run.status === '실패';
+
+  return (
+    <details
+      className={cn(
+        'group rounded-lg border bg-slate-50 p-4',
+        isFailed ? 'border-red-200 bg-red-50' : 'border-slate-200',
+      )}
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <strong className="text-sm font-black text-slate-950">
+              {run.startedAt}
+            </strong>
+            <Badge variant={run.executionSource === '자동 실행' ? 'secondary' : 'default'}>
+              {run.executionSource}
+            </Badge>
+            <Badge variant={isFailed ? 'warning' : 'success'}>{run.status}</Badge>
+          </div>
+          <span className="mt-2 block text-sm text-slate-500">
+            실행자 {run.executorLabel} · 트리거 {run.triggerLabel}
+          </span>
+          <small className="mt-1 block text-xs text-slate-400">
+            실행 시간 {formatDuration(run.duration)} · 토큰{' '}
+            {run.tokens.toLocaleString('ko-KR')}개 · 노드 {run.nodeLogs.length}개
+          </small>
+        </div>
+        <span className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-600 group-open:hidden">
+          상세보기
+        </span>
+        <span className="hidden shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-600 group-open:inline">
+          접기
+        </span>
+      </summary>
+
+      <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4">
+        <div className="grid gap-2 rounded-lg bg-white p-3 text-xs text-slate-600 md:grid-cols-2">
+          <RunMeta label="실행 방식" value={run.executionSource} />
+          <RunMeta label="실행자" value={run.executorLabel} />
+          <RunMeta label="트리거" value={run.triggerLabel} />
+          <RunMeta label="시작 시각" value={run.startedAt} />
+        </div>
+        <div className="grid gap-2">
+          {run.nodeLogs.map((log) => (
+            <NodeLogRow key={`${run.id}-${log.nodeId}-${log.name}`} log={log} compact />
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function RunMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[72px_1fr] gap-2">
+      <span className="font-black text-slate-500">{label}</span>
+      <span className="min-w-0 break-words text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function NodeLogRow({ log, compact = false }: { log: ExecutionLog; compact?: boolean }) {
+  const isSuccess = log.status === 'Success';
+
+  return (
+    <article
+      className={cn(
+        'flex items-center justify-between gap-3 rounded-lg border bg-slate-50 p-4',
+        compact && 'p-3',
+        isSuccess ? 'border-slate-200' : 'border-red-200 bg-red-50',
+      )}
+    >
+      <div className="min-w-0">
+        <strong className="block truncate text-sm font-black text-slate-950">
+          {log.name}
+        </strong>
+        <span className="mt-1 block text-sm text-slate-500">
+          {log.typeLabel} · {log.description ?? '설명 없음'}
+        </span>
+        <small className="mt-1 block text-xs text-slate-400">
+          실행 시간 {formatDuration(log.duration)} · 크레딧 {log.credits}
+        </small>
+        {log.message && (
+          <small className="mt-1 block text-xs text-red-600">{log.message}</small>
+        )}
+      </div>
+      <Badge variant={isSuccess ? 'success' : 'warning'}>
+        {isSuccess ? '성공' : '실패'}
+      </Badge>
+    </article>
   );
 }
 
