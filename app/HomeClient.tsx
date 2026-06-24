@@ -1949,7 +1949,7 @@ export default function HomePage({
             failureQueue={failureQueue}
             onCreateWorkflow={openWorkflowModal}
             onShowWorkflowList={() => handleNavigation('workflowList')}
-            onEditWorkflow={openWorkflowBuilder}
+            onOpenWorkflowBuilder={openWorkflowBuilder}
             onDeleteWorkflow={handleDeleteWorkflow}
             onOpenAnalytics={openWorkflowAnalytics}
           />
@@ -1960,7 +1960,7 @@ export default function HomePage({
             workflows={workflows}
             failureQueue={failureQueue}
             onCreateWorkflow={openWorkflowModal}
-            onEditWorkflow={openWorkflowBuilder}
+            onOpenWorkflowBuilder={openWorkflowBuilder}
             onDeleteWorkflow={handleDeleteWorkflow}
             onOpenAnalytics={openWorkflowAnalytics}
           />

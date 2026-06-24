@@ -1,4 +1,4 @@
-import { BarChart3, Pencil, Trash2, Workflow } from 'lucide-react';
+import { BarChart3, Trash2, Workflow } from 'lucide-react';
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import { cn } from '@/src/lib/utils';
@@ -7,17 +7,17 @@ import type { WorkflowRecord } from '../../domains/workflow/types';
 type WorkflowListItemProps = {
   workflow: WorkflowRecord;
   hasFailureQueue?: boolean;
-  onEdit: (workflow: WorkflowRecord) => void;
+  onOpenBuilder: (workflow: WorkflowRecord) => void;
   onDelete: (workflowId: number) => void;
   onAnalytics: (workflowId: number) => void;
 };
 
 // 홈/목록에서 공통으로 쓰는 워크플로우 행 컴포넌트입니다.
-// 본문 클릭은 보고 화면 진입, 편집은 별도 버튼으로 분리합니다.
+// 본문 클릭은 워크플로우 빌더 진입으로 통일합니다.
 export function WorkflowListItem({
   workflow,
   hasFailureQueue = false,
-  onEdit,
+  onOpenBuilder,
   onDelete,
   onAnalytics,
 }: WorkflowListItemProps) {
@@ -33,7 +33,7 @@ export function WorkflowListItem({
       <button
         type="button"
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
-        onClick={() => onAnalytics(workflow.id)}
+        onClick={() => onOpenBuilder(workflow)}
       >
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-slate-950 text-white">
           <Workflow size={18} />
@@ -56,10 +56,6 @@ export function WorkflowListItem({
       </button>
 
       <div className="flex shrink-0 flex-wrap justify-end gap-2">
-        <Button type="button" variant="secondary" size="sm" onClick={() => onEdit(workflow)}>
-          <Pencil size={14} />
-          편집
-        </Button>
         <Button type="button" variant="secondary" size="sm" onClick={() => onAnalytics(workflow.id)}>
           <BarChart3 size={14} />
           보고

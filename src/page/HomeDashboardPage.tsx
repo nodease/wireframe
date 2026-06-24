@@ -12,7 +12,7 @@ type HomeDashboardPageProps = {
   failureQueue: FailureQueueItem[];
   onCreateWorkflow: () => void;
   onShowWorkflowList: () => void;
-  onEditWorkflow: (workflow: WorkflowRecord) => void;
+  onOpenWorkflowBuilder: (workflow: WorkflowRecord) => void;
   onDeleteWorkflow: (workflowId: number) => void;
   onOpenAnalytics: (workflowId: number) => void;
 };
@@ -23,7 +23,7 @@ export function HomeDashboardPage({
   failureQueue,
   onCreateWorkflow,
   onShowWorkflowList,
-  onEditWorkflow,
+  onOpenWorkflowBuilder,
   onDeleteWorkflow,
   onOpenAnalytics,
 }: HomeDashboardPageProps) {
@@ -87,7 +87,7 @@ export function HomeDashboardPage({
                 최근 사용한 워크플로우
               </h3>
               <p className="mt-1 text-sm text-slate-500">
-                저장된 워크플로우를 바로 편집하거나 삭제할 수 있습니다.
+                저장된 워크플로우를 클릭하면 바로 빌더 화면으로 이동합니다.
               </p>
             </div>
             <Button type="button" variant="secondary" onClick={onShowWorkflowList}>
@@ -110,7 +110,7 @@ export function HomeDashboardPage({
                   key={workflow.id}
                   workflow={workflow}
                   hasFailureQueue={hasFailureQueue(workflow)}
-                  onEdit={onEditWorkflow}
+                  onOpenBuilder={onOpenWorkflowBuilder}
                   onDelete={onDeleteWorkflow}
                   onAnalytics={onOpenAnalytics}
                 />

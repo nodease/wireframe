@@ -12,7 +12,7 @@ type WorkflowListPageProps = {
   workflows: WorkflowRecord[];
   failureQueue: FailureQueueItem[];
   onCreateWorkflow: () => void;
-  onEditWorkflow: (workflow: WorkflowRecord) => void;
+  onOpenWorkflowBuilder: (workflow: WorkflowRecord) => void;
   onDeleteWorkflow: (workflowId: number) => void;
   onOpenAnalytics: (workflowId: number) => void;
 };
@@ -21,7 +21,7 @@ export function WorkflowListPage({
   workflows,
   failureQueue,
   onCreateWorkflow,
-  onEditWorkflow,
+  onOpenWorkflowBuilder,
   onDeleteWorkflow,
   onOpenAnalytics,
 }: WorkflowListPageProps) {
@@ -108,7 +108,7 @@ export function WorkflowListPage({
               key={workflow.id}
               workflow={workflow}
               hasFailureQueue={hasFailureQueue(workflow)}
-              onEdit={onEditWorkflow}
+              onOpenBuilder={onOpenWorkflowBuilder}
               onDelete={onDeleteWorkflow}
               onAnalytics={onOpenAnalytics}
             />
