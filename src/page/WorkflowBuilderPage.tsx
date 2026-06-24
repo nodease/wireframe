@@ -433,6 +433,8 @@ function RunLogSidebar({
   onClose: () => void;
 }) {
   const activeFailures = failureQueue.filter((item) => item.status !== 'resolved');
+  const totalDuration = executionLogs.reduce((total, log) => total + log.duration, 0);
+  const totalCredits = executionLogs.reduce((total, log) => total + log.credits, 0);
 
   if (!isOpen) {
     return null;
@@ -457,6 +459,11 @@ function RunLogSidebar({
         >
           <X size={16} />
         </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 border-b border-slate-200 p-4">
+        <RunLogMetric label="실행 시간" value={`${totalDuration.toFixed(1)}s`} />
+        <RunLogMetric label="크레딧" value={String(totalCredits)} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -529,6 +536,17 @@ function RunLogSidebar({
         </div>
       )}
     </aside>
+  );
+}
+
+function RunLogMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <span className="block text-xs font-black text-slate-500">{label}</span>
+      <strong className="mt-1 block text-lg font-black text-slate-950">
+        {value}
+      </strong>
+    </div>
   );
 }
 
