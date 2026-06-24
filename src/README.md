@@ -2,6 +2,8 @@
 
 이 폴더는 데모 UI를 다른 React/Next 프로젝트에서도 옮겨 쓰기 쉽도록 나눈 영역입니다.
 
+Codex 작업자는 루트의 `AGENTS.md`와 `CODEX_REUSE_RULES.md`를 우선 기준으로 삼아야 합니다.
+
 ## folders
 
 - `components/`: 재사용 가능한 작은 UI 단위입니다.

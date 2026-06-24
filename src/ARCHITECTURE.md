@@ -2,6 +2,8 @@
 
 이 프로젝트의 프론트엔드는 다른 Next + React + TailwindCSS + React Flow 프로젝트로 옮기기 쉽도록 아래 계층으로 나눕니다.
 
+Codex로 새 기능을 추가하거나 구조를 바꿀 때는 루트의 `AGENTS.md`와 `CODEX_REUSE_RULES.md`를 먼저 확인합니다.
+
 ## components
 
 - `components/ui`: shadcn 호환 공통 UI입니다. `Button`, `Card`, `Input`, `Badge`, `Tabs`, `Switch`처럼 도메인과 무관한 컴포넌트만 둡니다.
