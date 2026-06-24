@@ -435,6 +435,7 @@ function RunLogSidebar({
   const activeFailures = failureQueue.filter((item) => item.status !== 'resolved');
   const totalDuration = executionLogs.reduce((total, log) => total + log.duration, 0);
   const totalCredits = executionLogs.reduce((total, log) => total + log.credits, 0);
+  const [expandedLogKey, setExpandedLogKey] = useState<string | null>(null);
 
   if (!isOpen) {
     return null;
@@ -483,10 +484,12 @@ function RunLogSidebar({
           <div className="space-y-3">
             {executionLogs.map((log, index) => {
               const isFailed = log.status === 'Failed';
+              const logKey = `${log.nodeId}-${index}`;
+              const isExpanded = expandedLogKey === logKey;
 
               return (
                 <article
-                  key={`${log.nodeId}-${index}`}
+                  key={logKey}
                   className={cn(
                     'rounded-lg border bg-slate-50 p-3',
                     isFailed ? 'border-red-200 bg-red-50' : 'border-slate-200',
@@ -518,6 +521,31 @@ function RunLogSidebar({
                       {isFailed ? '실패' : '완료'}
                     </Badge>
                   </div>
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        setExpandedLogKey((currentKey) =>
+                          currentKey === logKey ? null : logKey,
+                        )
+                      }
+                    >
+                      {isExpanded ? '접기' : '상세보기'}
+                    </Button>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-3 grid gap-2 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                      <RunLogDetailRow label="노드 ID" value={String(log.nodeId)} />
+                      <RunLogDetailRow label="노드 유형" value={log.typeLabel} />
+                      <RunLogDetailRow label="실행 상태" value={isFailed ? '실패' : '완료'} />
+                      <RunLogDetailRow label="실행 시간" value={`${log.duration.toFixed(1)}s`} />
+                      <RunLogDetailRow label="사용 크레딧" value={String(log.credits)} />
+                      <RunLogDetailRow label="설명" value={log.description ?? '-'} />
+                      {log.message && <RunLogDetailRow label="메시지" value={log.message} />}
+                    </div>
+                  )}
                 </article>
               );
             })}
@@ -535,7 +563,65 @@ function RunLogSidebar({
           </p>
         </div>
       )}
+
+      {executionLogs.length > 0 && (
+        <RunDurationShareBar executionLogs={executionLogs} totalDuration={totalDuration} />
+      )}
     </aside>
+  );
+}
+
+function RunLogDetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[84px_1fr] gap-3">
+      <span className="font-black text-slate-500">{label}</span>
+      <span className="min-w-0 break-words text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function RunDurationShareBar({
+  executionLogs,
+  totalDuration,
+}: {
+  executionLogs: ExecutionLog[];
+  totalDuration: number;
+}) {
+  const denominator = Math.max(totalDuration, 0.01);
+
+  return (
+    <div className="border-t border-slate-200 bg-white p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <strong className="text-xs font-black text-slate-700">실행 시간 비중</strong>
+        <span className="text-xs font-semibold text-slate-500">
+          총 {totalDuration.toFixed(1)}s
+        </span>
+      </div>
+      <div className="flex h-2 overflow-hidden rounded-full bg-slate-100">
+        {executionLogs.map((log, index) => {
+          const width = Math.max(3, (log.duration / denominator) * 100);
+          const isFailed = log.status === 'Failed';
+
+          return (
+            <span
+              key={`${log.nodeId}-${index}`}
+              className={cn(
+                'h-full',
+                isFailed
+                  ? 'bg-red-500'
+                  : index % 3 === 0
+                    ? 'bg-slate-950'
+                    : index % 3 === 1
+                      ? 'bg-slate-600'
+                      : 'bg-slate-400',
+              )}
+              style={{ width: `${width}%` }}
+              title={`${log.name}: ${log.duration.toFixed(1)}s`}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
